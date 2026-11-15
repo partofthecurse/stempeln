@@ -43,3 +43,7 @@ if (timer) {
     if (document.visibilityState === 'visible' && Date.now() / 1000 - offset - renderedAt > 60) location.reload();
   });
 }
+
+document.querySelectorAll('select[data-autosubmit]').forEach(select => {
+  select.addEventListener('change', () => select.form.submit());
+});

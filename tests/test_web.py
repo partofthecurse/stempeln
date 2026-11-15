@@ -113,3 +113,85 @@ class WebTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProjectTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.app = create_app({"TESTING": True, "DATA_DIR": self.temp.name, "ENABLE_MONITOR": False,
+                               "SESSION_COOKIE_SECURE": False, "WTF_CSRF_ENABLED": False})
+        self.store = self.app.extensions["stempel_store"]
+        with self.store.connect() as connection:
+            connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('frei', ?, 'admin')", (hasher.hash("frei-password-123"),))
+            connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('other', ?, 'user')", (hasher.hash("other-password-123"),))
+        self.client = self.app.test_client()
+        self.client.post("/login", data={"username": "frei", "password": "frei-password-123"})
+        self.client.post("/projekte", data={"name": "Website Relaunch", "client": "ACME", "rate": "90,00", "color": "green"})
+        self.client.post("/projekte", data={"name": "Wartung", "color": "orange"})
+        ids = {p["name"]: p["id"] for p in self.store.projects(1)}
+        self.web, self.maintenance = ids["Website Relaunch"], ids["Wartung"]
+
+    def test_project_crud_and_duplicates(self):
+        projects = {p["name"]: p for p in self.store.projects(1)}
+        self.assertEqual((projects["Website Relaunch"]["rate_cents"], projects["Website Relaunch"]["client"]), (9000, "ACME"))
+        response = self.client.post("/projekte", data={"name": "wartung", "color": "blue"}, follow_redirects=True)
+        self.assertIn("gibt es schon".encode(), response.data)
+        self.assertEqual(self.client.get("/projekte").status_code, 200)
+        self.client.post(f"/projekte/{self.maintenance}/archive")
+        self.assertNotIn(b"Wartung</option>", self.client.get("/").data)
+
+    def test_stamp_with_project_and_switch(self):
+        self.client.post("/stamp", data={"action": "in", "project_id": str(self.web)})
+        self.assertEqual(self.store.open_entry(1)["project_name"], "Website Relaunch")
+        with self.store.connect() as connection:
+            connection.execute("UPDATE entries SET start_at = start_at - 1800")
+        self.client.post("/stamp", data={"action": "switch", "project_id": str(self.maintenance)})
+        self.assertEqual(self.store.open_entry(1)["project_id"], self.maintenance)
+        with self.store.connect() as connection:
+            rows = connection.execute("SELECT project_id, end_at IS NULL AS open FROM entries ORDER BY id").fetchall()
+        self.assertEqual([tuple(row) for row in rows], [(self.web, 0), (self.maintenance, 1)])
+
+    def test_foreign_project_is_rejected(self):
+        self.client.post("/logout")
+        self.client.post("/login", data={"username": "other", "password": "other-password-123"})
+        self.assertEqual(self.client.post("/stamp", data={"action": "in", "project_id": str(self.web)}).status_code, 400)
+        response = self.client.post("/entries", data={"day": "2026-11-16", "start": "08:00", "end": "09:00", "project_id": str(self.web)}, follow_redirects=True)
+        self.assertIn("Unbekanntes Projekt".encode(), response.data)
+
+    def test_entry_csv_contains_project_amount_and_filter(self):
+        self.client.post("/entries", data={"day": "2026-11-16", "start": "09:00", "end": "11:30", "project_id": str(self.web), "note": "Layout"})
+        self.client.post("/entries", data={"day": "2026-11-16", "start": "13:00", "end": "14:00", "project_id": str(self.maintenance)})
+        csv = self.client.get("/zeiten.csv?monat=2026-11&art=eintraege").data.decode("utf-8-sig")
+        self.assertIn("16.11.2026;09:00;11:30;2:30;2,50;Website Relaunch;ACME;90,00;225,00;Layout", csv)
+        filtered = self.client.get(f"/zeiten.csv?monat=2026-11&art=eintraege&projekt={self.maintenance}").data.decode("utf-8-sig")
+        self.assertNotIn("Website", filtered)
+        self.assertIn("Wartung", filtered)
+        page = self.client.get("/projekte?monat=2026-11").data.decode()
+        self.assertIn("225,00 €", page)
+
+    def test_api_project_toggle_switches(self):
+        self.client.post("/automatik", data={"action": "token", "name": "NFC"})
+        token = re.search(rb"stp_[A-Za-z0-9_\-]+", self.client.get("/automatik").data).group().decode()
+        headers = {"Authorization": f"Bearer {token}"}
+        first = self.client.post("/api/v1/clock?format=text", json={"action": "toggle", "project": "website relaunch"}, headers=headers)
+        self.assertIn("Website Relaunch", first.get_data(as_text=True))
+        with self.store.connect() as connection:
+            connection.execute("UPDATE entries SET start_at = start_at - 3600")
+        second = self.client.post("/api/v1/clock", json={"action": "toggle", "project": self.maintenance}, headers=headers)
+        self.assertEqual((second.json["result"], second.json["project"]), ("switched", "Wartung"))
+        third = self.client.post("/api/v1/clock", json={"action": "toggle", "project": "Wartung"}, headers=headers)
+        self.assertEqual(third.json["state"], "out")
+        self.assertEqual(self.client.post("/api/v1/clock", json={"project": "Gibtsnicht"}, headers=headers).status_code, 400)
+
+    def test_balance_can_be_switched_off(self):
+        self.client.post("/account", data={"action": "model", "weekly_hours": "0", "region": "", "vacation_days": "0", "balance_offset": "0"})
+        self.assertEqual(self.store.profile(1)["track_balance"], 0)
+        page = self.client.get("/").data.decode()
+        self.assertNotIn("SALDO", page)
+        self.assertNotIn("Abwesenheit</a>", page)
+        self.assertIn("ABRECHENBAR", page)
+        self.client.post("/automatik", data={"action": "token", "name": "x"})
+        token = re.search(rb"stp_[A-Za-z0-9_\-]+", self.client.get("/automatik").data).group().decode()
+        status = self.client.get("/api/v1/status?format=text", headers={"Authorization": f"Bearer {token}"}).get_data(as_text=True)
+        self.assertNotIn("Saldo", status)

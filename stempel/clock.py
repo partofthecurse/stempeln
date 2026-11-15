@@ -30,7 +30,7 @@ def _close(connection, entry, end_at):
     return end_at
 
 
-def clock_in(store, user_id, source="web", now=None, note=""):
+def clock_in(store, user_id, source="web", now=None, note="", project_id=None):
     now = int(now or time.time())
     with store.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -38,8 +38,8 @@ def clock_in(store, user_id, source="web", now=None, note=""):
         if _open(connection, user_id):
             return False
         connection.execute(
-            "INSERT INTO entries (user_id, start_at, last_seen, source, note) VALUES (?, ?, ?, ?, ?)",
-            (user_id, now, now, source, note[:200]),
+            "INSERT INTO entries (user_id, start_at, last_seen, source, note, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, now, now, source, note[:200], project_id),
         )
         connection.execute("UPDATE profiles SET auto_suppressed = 0 WHERE user_id = ?", (user_id,))
         return True
@@ -59,11 +59,39 @@ def clock_out(store, user_id, now=None):
         return True
 
 
-def toggle(store, user_id, source="web", now=None):
-    if store.open_entry(user_id):
+def switch(store, user_id, project_id, source="web", now=None, note=""):
+    """Wechselt das Projekt: laufenden Eintrag beenden und sofort einen neuen starten."""
+    now = int(now or time.time())
+    with store.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _ensure_profile(connection, user_id)
+        entry = _open(connection, user_id)
+        if entry and entry["project_id"] == project_id:
+            return False
+        if entry:
+            source = entry["source"]
+            if now - entry["start_at"] < MIN_ENTRY_SECONDS:
+                connection.execute("UPDATE entries SET project_id = ? WHERE id = ?", (project_id, entry["id"]))
+                return True
+            _close(connection, entry, now)
+        connection.execute(
+            "INSERT INTO entries (user_id, start_at, last_seen, source, note, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, now, now, source, note[:200], project_id),
+        )
+        connection.execute("UPDATE profiles SET auto_suppressed = 0 WHERE user_id = ?", (user_id,))
+        return True
+
+
+def toggle(store, user_id, source="web", now=None, project_id=None):
+    """Ohne Projekt: ein/aus. Mit Projekt: läuft ein anderes Projekt, wird gewechselt."""
+    entry = store.open_entry(user_id)
+    if entry:
+        if project_id is not None and entry["project_id"] != project_id:
+            switch(store, user_id, project_id, source, now)
+            return "switched"
         clock_out(store, user_id, now)
         return "out"
-    clock_in(store, user_id, source, now)
+    clock_in(store, user_id, source, now, project_id=project_id)
     return "in"
 
 
@@ -84,9 +112,12 @@ def signal(store, user_id, source="heartbeat", now=None):
             if previous is not None and now - previous <= profile["idle_minutes"] * 60:
                 return "suppressed"
             connection.execute("UPDATE profiles SET auto_suppressed = 0 WHERE user_id = ?", (user_id,))
+        default_project = connection.execute(
+            "SELECT id FROM projects WHERE id = ? AND user_id = ? AND archived = 0", (profile["default_project_id"], user_id)
+        ).fetchone()
         connection.execute(
-            "INSERT INTO entries (user_id, start_at, last_seen, source) VALUES (?, ?, ?, ?)",
-            (user_id, now, now, source),
+            "INSERT INTO entries (user_id, start_at, last_seen, source, project_id) VALUES (?, ?, ?, ?, ?)",
+            (user_id, now, now, source, default_project[0] if default_project else None),
         )
         return "started"
 

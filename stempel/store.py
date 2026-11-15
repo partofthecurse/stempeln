@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS absences (
     half INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    client TEXT NOT NULL DEFAULT '',
+    rate_cents INTEGER,
+    color TEXT NOT NULL DEFAULT 'blue',
+    archived INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, name COLLATE NOCASE)
+);
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -77,6 +87,20 @@ class Store:
         with self.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.executescript(SCHEMA)
+            self._migrate(connection)
+
+    @staticmethod
+    def _migrate(connection):
+        def columns(table):
+            return {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if "project_id" not in columns("entries"):
+            connection.execute("ALTER TABLE entries ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        connection.execute("CREATE INDEX IF NOT EXISTS entries_project ON entries(project_id)")
+        profile_columns = columns("profiles")
+        if "track_balance" not in profile_columns:
+            connection.execute("ALTER TABLE profiles ADD COLUMN track_balance INTEGER NOT NULL DEFAULT 1")
+        if "default_project_id" not in profile_columns:
+            connection.execute("ALTER TABLE profiles ADD COLUMN default_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
 
     @contextmanager
     def connect(self):
@@ -103,18 +127,59 @@ class Store:
         with self.connect() as connection:
             connection.execute(f"UPDATE profiles SET {columns} WHERE user_id = ?", (*values.values(), user_id))
 
+    ENTRY_COLUMNS = ("SELECT entries.*, projects.name AS project_name, projects.client AS project_client, "
+                     "projects.color AS project_color, projects.rate_cents AS project_rate "
+                     "FROM entries LEFT JOIN projects ON projects.id = entries.project_id ")
+
     def open_entry(self, user_id):
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM entries WHERE user_id = ? AND end_at IS NULL", (user_id,)).fetchone()
+            row = connection.execute(self.ENTRY_COLUMNS + "WHERE entries.user_id = ? AND end_at IS NULL", (user_id,)).fetchone()
         return dict(row) if row else None
 
-    def entries_between(self, user_id, start, end):
+    def entry(self, user_id, entry_id):
         with self.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM entries WHERE user_id = ? AND start_at < ? AND COALESCE(end_at, ?) > ? ORDER BY start_at",
-                (user_id, end, 2 ** 40, start),
-            ).fetchall()
+            row = connection.execute(self.ENTRY_COLUMNS + "WHERE entries.user_id = ? AND entries.id = ?", (user_id, entry_id)).fetchone()
+        return dict(row) if row else None
+
+    def entries_between(self, user_id, start, end, project_id=None):
+        query = self.ENTRY_COLUMNS + "WHERE entries.user_id = ? AND start_at < ? AND COALESCE(end_at, ?) > ?"
+        parameters = [user_id, end, 2 ** 40, start]
+        if project_id == 0:
+            query += " AND entries.project_id IS NULL"
+        elif project_id:
+            query += " AND entries.project_id = ?"
+            parameters.append(project_id)
+        with self.connect() as connection:
+            rows = connection.execute(query + " ORDER BY start_at", parameters).fetchall()
         return [dict(row) for row in rows]
+
+    def projects(self, user_id, include_archived=True):
+        query = "SELECT * FROM projects WHERE user_id = ?" + ("" if include_archived else " AND archived = 0")
+        with self.connect() as connection:
+            rows = connection.execute(query + " ORDER BY archived, name COLLATE NOCASE", (user_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def project(self, user_id, project_id):
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM projects WHERE user_id = ? AND id = ?", (user_id, project_id)).fetchone()
+        return dict(row) if row else None
+
+    def find_project(self, user_id, reference):
+        """Projekt per ID oder Name (ohne Groß-/Kleinschreibung)."""
+        reference = str(reference).strip()
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM projects WHERE user_id = ? AND (CAST(id AS TEXT) = ? OR name = ? COLLATE NOCASE) ORDER BY archived LIMIT 1",
+                (user_id, reference, reference),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def last_project_id(self, user_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT entries.project_id FROM entries JOIN projects ON projects.id = entries.project_id "
+                "WHERE entries.user_id = ? AND projects.archived = 0 ORDER BY start_at DESC LIMIT 1", (user_id,)).fetchone()
+        return row[0] if row else None
 
     def first_entry_start(self, user_id):
         with self.connect() as connection:

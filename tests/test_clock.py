@@ -51,6 +51,21 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(clock.toggle(self.store, self.user, "api", now=5000), "out")
         self.assertEqual(self.entries()[0]["end_at"], 5000)
 
+    def test_switch_and_default_project_for_automatic_sessions(self):
+        with self.store.connect() as connection:
+            connection.execute("INSERT INTO projects (user_id, name) VALUES (1, 'A')")
+            connection.execute("INSERT INTO projects (user_id, name) VALUES (1, 'B')")
+        self.store.update_profile(self.user, default_project_id=1)
+        t = 1_800_000_000
+        clock.signal(self.store, self.user, now=t)
+        self.assertEqual(self.store.open_entry(self.user)["project_id"], 1)
+        self.assertTrue(clock.switch(self.store, self.user, 2, now=t + 600))
+        entries = self.entries()
+        self.assertEqual([(e["project_id"], e["end_at"], e["source"]) for e in entries], [(1, t + 600, "heartbeat"), (2, None, "heartbeat")])
+        self.assertFalse(clock.switch(self.store, self.user, 2, now=t + 700))
+        self.assertEqual(clock.toggle(self.store, self.user, now=t + 900, project_id=1), "switched")
+        self.assertEqual(clock.toggle(self.store, self.user, now=t + 1200, project_id=1), "out")
+
     def test_probe_target_parsing(self):
         self.assertEqual(clock.parse_target("laptop.fritz.box:445"), ("laptop.fritz.box", 445))
         self.assertEqual(clock.parse_target("192.168.1.5"), ("192.168.1.5", None))

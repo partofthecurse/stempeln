@@ -65,6 +65,8 @@ def required_break_net(worked, gaps):
 
 
 def target_seconds(profile, day, absence=None):
+    if not profile.get("track_balance", 1):
+        return 0
     workdays = profile["workdays"]
     if not workdays or str(day.weekday()) not in workdays:
         return 0
@@ -116,10 +118,10 @@ def days_between(first, last):
         current += timedelta(days=1)
 
 
-def range_report(store, user_id, profile, first, last, now=None):
+def range_report(store, user_id, profile, first, last, now=None, project_id=None):
     start, _ = day_bounds(first)
     _, end = day_bounds(last)
-    entries = store.entries_between(user_id, start, end)
+    entries = store.entries_between(user_id, start, end, project_id)
     absences = store.absences_between(user_id, first.isoformat(), last.isoformat())
     return [day_report(profile, day, entries, absences.get(day.isoformat()), now) for day in days_between(first, last)]
 
@@ -165,3 +167,21 @@ def fmt_duration(seconds, signed=False):
 
 def fmt_time(timestamp):
     return to_local(timestamp).strftime("%H:%M")
+
+
+def project_totals(reports):
+    """Erfasste Zeit (ohne Pausenabzug) je Projekt-ID; None = ohne Projekt."""
+    totals = {}
+    for report in reports:
+        for begin, finish, entry in report["segments"]:
+            totals[entry["project_id"]] = totals.get(entry["project_id"], 0) + finish - begin
+    return totals
+
+
+def fmt_money(cents):
+    euros, rest = divmod(int(round(cents)), 100)
+    return f"{euros:,}".replace(",", ".") + f",{rest:02d} €"
+
+
+def amount_cents(seconds, rate_cents):
+    return seconds * rate_cents / 3600 if rate_cents else 0

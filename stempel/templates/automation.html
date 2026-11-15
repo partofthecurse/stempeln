@@ -11,6 +11,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="device">
       <label>Hostname oder IP <span class="hint">leer = aus · optional mit :Port für TCP statt Ping</span><input name="device_host" value="{{ profile.device_host }}" placeholder="192.168.1.42 oder laptop.fritz.box" maxlength="253"></label>
       <label>Leerlaufzeit in Minuten <span class="hint">so lange darf das Gerät fehlen (Standby, WLAN-Wechsel)</span><input type="number" name="idle_minutes" min="2" max="240" value="{{ profile.idle_minutes }}"></label>
+      <label>Projekt für automatische Einträge <span class="hint">gilt auch für den Agenten (heartbeat)</span><select name="default_project_id"><option value="">Ohne Projekt</option>{% for p in projects %}<option value="{{ p.id }}" {% if p.id == profile.default_project_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select></label>
       <button class="primary-button" type="submit">Speichern <span>→</span></button>
     </form>
     {% if profile.device_host %}<form method="post" class="inline-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="test"><button class="secondary-button" type="submit">Jetzt testen</button></form>{% endif %}
@@ -31,6 +32,7 @@
   <p><code>POST {{ base_url }}/api/v1/clock</code> mit Header <code>Authorization: Bearer &lt;token&gt;</code> und JSON <code>{"action": "…"}</code>. Mögliche Aktionen:</p>
   <ul class="plain-list">
     <li><code>in</code> / <code>out</code> / <code>toggle</code> – ein- oder ausstempeln, z. B. per NFC-Tag am Schreibtisch.</li>
+    <li>Optional <code>"project": "Name"</code> oder die Projekt-ID: <code>in</code>/<code>toggle</code> mit Projekt startet dieses Projekt; läuft gerade ein anderes, wird gewechselt. So kann jeder NFC-Tag ein eigenes Projekt haben.</li>
     <li><code>heartbeat</code> – „ich arbeite gerade“. Startet bei Bedarf eine Sitzung; bleiben die Signale länger als die Leerlaufzeit aus, wird automatisch ausgestempelt.</li>
   </ul>
   <p><code>GET {{ base_url }}/api/v1/status</code> liefert Status, heutige Nettozeit und Saldo (z. B. für ein Home-Assistant-Dashboard).</p>

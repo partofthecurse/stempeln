@@ -9,6 +9,8 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
 ## Funktionen
 
 - **Stempeluhr** mit Live-Timer, Tagessoll und voraussichtlichem Feierabend
+- **Projekte & Kunden** mit Farbe und optionalem Stundensatz: beim Einstempeln wählen, mit einem Klick wechseln, nachträglich zuordnen. Monatsauswertung mit Stunden und abrechenbarem Betrag, CSV pro Eintrag für die Rechnung.
+- **Für Angestellte oder freiberuflich**: Soll, Überstundensaldo, Resturlaub und Abwesenheiten lassen sich pro Konto abschalten. Dann zählt Stempel nur Stunden je Projekt.
 - **Automatische Erfassung**
   - *Gerät im Heimnetz*: Stempel pingt jede Minute deinen Arbeitslaptop (oder prüft einen TCP-Port). Ist er online, läuft die Zeit. Ist er länger als die Leerlaufzeit weg, endet der Eintrag zum letzten Kontakt.
   - *Lebenszeichen-API*: Ein kleiner Agent auf dem Arbeits-PC meldet sich nur, solange du Maus oder Tastatur benutzt. Damit zählen Mittagspausen nicht als Arbeitszeit. Skripte für Windows (PowerShell) und Linux/macOS liegen in der App unter **Automatik**.
@@ -67,6 +69,8 @@ Mit `?format=text` kommt statt JSON nur ein lesbarer Satz zurück, z. B. `👋 A
 
 - **iPhone:** Kurzbefehle → Automation → NFC → Tag scannen → „Inhalte von URL abrufen“ (`POST …/api/v1/clock?format=text&action=toggle`, Header `Authorization: Bearer stp_…`) → „Mitteilung anzeigen“.
 - **Android:** über die Home-Assistant-App (Tag scannen → Automation → `rest_command`) oder mit „HTTP Shortcuts“ + „NFC Tools“.
+
+Optional `"project": "Name"` oder die Projekt-ID: `in` bzw. `toggle` mit Projekt startet dieses Projekt. Läuft gerade ein anderes, wird gewechselt (`"result": "switched"`). So kann jeder NFC-Tag ein eigenes Projekt haben. Für automatische Einträge (Gerät, Lebenszeichen) lässt sich unter **Automatik** ein Standardprojekt wählen.
 
 `GET /api/v1/status` liefert Status, heutige Nettozeit, Tagessoll und Saldo in Minuten, etwa für ein Home-Assistant-Dashboard. Fertige Beispiele für Home Assistant (`rest_command`) und die Agenten stehen in der App.
 

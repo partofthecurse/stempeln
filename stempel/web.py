@@ -21,11 +21,12 @@ from . import clock
 from .security import (DUMMY_HASH, clear_failures, hasher, load_keys, new_api_token, password_valid, rate_limited,
                        record_failure, recovery_hash, token_hash)
 from .store import Store
-from .timecalc import (ABSENCE_LABELS, REGIONS, WEEKDAYS, balance, day_bounds, day_report, days_between, fmt_duration,
-                       fmt_time, parse_local, range_report, required_break_net, target_seconds, to_local, today,
-                       vacation_used)
+from .timecalc import (ABSENCE_LABELS, REGIONS, WEEKDAYS, amount_cents, balance, day_bounds, day_report, days_between,
+                       fmt_duration, fmt_money, fmt_time, parse_local, project_totals, range_report, required_break_net,
+                       target_seconds, to_local, today, vacation_used)
 
 SOURCE_LABELS = {"web": "Stempeluhr", "manual": "Nachgetragen", "api": "API", "heartbeat": "Lebenszeichen", "device": "Gerät"}
+PROJECT_COLORS = ["blue", "green", "orange", "purple", "red", "teal", "yellow", "grey"]
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
 
@@ -68,6 +69,18 @@ def parse_day(text):
         return None
 
 
+def parse_money(text):
+    """'85', '85,50' oder '' → Cent bzw. None."""
+    text = (text or "").strip().replace("€", "").replace(" ", "").replace(".", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        value = round(float(text) * 100)
+    except ValueError:
+        return -1
+    return value if 0 <= value <= 10_000_000 else -1
+
+
 def finish_estimate(report, now):
     """Uhrzeit, zu der das Tagessoll inkl. gesetzlicher Pause erreicht ist."""
     remaining = report["target"] - report["net"]
@@ -107,11 +120,19 @@ def create_app(test_config=None):
     if os.getenv("TRUST_PROXY", "false").lower() == "true":
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=0, x_for=0)
 
-    app.jinja_env.filters.update(duration=fmt_duration, clocktime=fmt_time, stamp=lambda ts: to_local(ts).strftime("%d.%m.%Y %H:%M"))
+    app.jinja_env.filters.update(duration=fmt_duration, clocktime=fmt_time, money=fmt_money,
+                                 stamp=lambda ts: to_local(ts).strftime("%d.%m.%Y %H:%M"),
+                                 hours=lambda seconds: f"{seconds / 3600:.2f}".replace(".", ","))
     app.jinja_env.globals.update(
         signed=lambda seconds: fmt_duration(seconds, signed=True), WEEKDAYS=WEEKDAYS, ABSENCE_LABELS=ABSENCE_LABELS,
-        SOURCE_LABELS=SOURCE_LABELS, REGIONS=REGIONS, MONTHS=MONTHS,
+        SOURCE_LABELS=SOURCE_LABELS, REGIONS=REGIONS, MONTHS=MONTHS, PROJECT_COLORS=PROJECT_COLORS,
     )
+
+    @app.context_processor
+    def navigation_context():
+        if current_user.is_authenticated:
+            return {"nav_profile": store.profile(current_user.uid)}
+        return {}
 
     @login_manager.user_loader
     def load_user(identifier):
@@ -159,11 +180,30 @@ def create_app(test_config=None):
             ).rowcount)
 
     def own_entry(entry_id):
-        with store.connect() as connection:
-            row = connection.execute("SELECT * FROM entries WHERE id = ? AND user_id = ?", (entry_id, current_user.uid)).fetchone()
-        if not row:
+        entry = store.entry(current_user.uid, entry_id)
+        if not entry:
             abort(404)
-        return dict(row)
+        return entry
+
+    def project_from_form(field="project_id"):
+        """(ok, project_id): leer = ohne Projekt; fremde IDs sind ungültig."""
+        value = request.form.get(field, "").strip()
+        if not value:
+            return True, None
+        project = store.project(current_user.uid, int(value)) if value.isdigit() else None
+        return (True, project["id"]) if project else (False, None)
+
+    def project_summary(reports, projects):
+        totals = project_totals(reports)
+        by_id = {project["id"]: project for project in projects}
+        rows = []
+        for project_id, seconds in sorted(totals.items(), key=lambda item: -item[1]):
+            project = by_id.get(project_id)
+            rows.append({
+                "project": project, "seconds": seconds,
+                "amount": amount_cents(seconds, project["rate_cents"]) if project else 0,
+            })
+        return rows
 
     @app.after_request
     def security_headers(response):
@@ -255,22 +295,36 @@ def create_app(test_config=None):
         report = week[current_day.weekday()]
         yesterday_balance = balance(store, current_user.uid, profile, current_user.created_at, current_day - timedelta(days=1), now)
         year = current_day.year
+        projects = store.projects(current_user.uid)
+        month = range_report(store, current_user.uid, profile, current_day.replace(day=1), current_day, now)
+        month_projects = project_summary(month, projects)
         return render_template(
             "index.html", now=now, profile=profile, report=report, week=week,
             week_net=sum(day["net"] for day in week), week_target=sum(day["target"] for day in week),
             balance=yesterday_balance, balance_now=yesterday_balance + report["diff"],
             open_entry=store.open_entry(current_user.uid), finish=finish_estimate(report, now),
             vacation_left=profile["vacation_days"] - vacation_used(store, current_user.uid, profile, year),
-            device=monitor.snapshot(current_user.uid),
+            device=monitor.snapshot(current_user.uid), projects=[p for p in projects if not p["archived"]],
+            last_project=store.last_project_id(current_user.uid), month_projects=month_projects,
+            month_worked=sum(row["seconds"] for row in month_projects), month_amount=sum(row["amount"] for row in month_projects),
+            today_projects=project_summary([report], projects),
         )
 
     @app.post("/stamp")
     @login_required
     def stamp():
         action = request.form.get("action")
+        valid, project_id = project_from_form()
+        if not valid:
+            abort(400)
+        note = request.form.get("note", "").strip()
         if action == "in":
-            if not clock.clock_in(store, current_user.uid, "web", note=request.form.get("note", "").strip()):
+            if not clock.clock_in(store, current_user.uid, "web", note=note, project_id=project_id):
                 flash("Du bist bereits eingestempelt.", "error")
+        elif action == "switch":
+            if clock.switch(store, current_user.uid, project_id, "web", note=note):
+                project = store.project(current_user.uid, project_id) if project_id else None
+                flash(f"Gewechselt zu {project['name'] if project else 'ohne Projekt'}.", "success")
         elif action == "out":
             if not clock.clock_out(store, current_user.uid):
                 flash("Du bist nicht eingestempelt.", "error")
@@ -295,7 +349,9 @@ def create_app(test_config=None):
         now = int(time.time())
         first, last, following = month_from_request()
         profile = store.profile(current_user.uid)
-        reports = range_report(store, current_user.uid, profile, first, last, now)
+        project_filter = request.args.get("projekt", type=int)
+        reports = range_report(store, current_user.uid, profile, first, last, now, project_filter)
+        projects = store.projects(current_user.uid)
         edit = own_entry(request.args.get("edit", type=int)) if request.args.get("edit") else None
         if edit:
             edit["start_day"] = to_local(edit["start_at"]).date().isoformat()
@@ -307,6 +363,8 @@ def create_app(test_config=None):
             total_net=sum(r["net"] for r in reports), total_target=sum(r["target"] for r in reports if r["day"] <= until),
             total_diff=sum(r["diff"] for r in reports if r["day"] <= until), month_balance=month_balance,
             default_day=request.args.get("tag") or min(max(today(), first), last).isoformat(),
+            projects=projects, project_filter=project_filter, month_projects=project_summary(reports, projects),
+            last_project=store.last_project_id(current_user.uid),
         )
 
     def entry_from_form(exclude_id=None, allow_open=False):
@@ -333,18 +391,22 @@ def create_app(test_config=None):
         if store.overlaps(current_user.uid, start, end, exclude_id):
             flash("Der Eintrag überschneidet sich mit einem vorhandenen Eintrag.", "error")
             return None
-        return start, end, note, day
+        valid, project_id = project_from_form()
+        if not valid:
+            flash("Unbekanntes Projekt.", "error")
+            return None
+        return start, end, note, day, project_id
 
     @app.post("/entries")
     @login_required
     def add_entry():
         values = entry_from_form()
         if values:
-            start, end, note, day = values
+            start, end, note, day, project_id = values
             with store.connect() as connection:
                 connection.execute(
-                    "INSERT INTO entries (user_id, start_at, end_at, source, note) VALUES (?, ?, ?, 'manual', ?)",
-                    (current_user.uid, start, end, note),
+                    "INSERT INTO entries (user_id, start_at, end_at, source, note, project_id) VALUES (?, ?, ?, 'manual', ?, ?)",
+                    (current_user.uid, start, end, note, project_id),
                 )
             flash("Eintrag gespeichert.", "success")
             return redirect(url_for("times", monat=day.strftime("%Y-%m")))
@@ -357,11 +419,12 @@ def create_app(test_config=None):
         values = entry_from_form(exclude_id=entry_id, allow_open=entry["end_at"] is None)
         if not values:
             return redirect(url_for("times", monat=request.form.get("day", "")[:7], edit=entry_id))
-        start, end, note, day = values
+        start, end, note, day, project_id = values
         with store.connect() as connection:
             connection.execute(
-                "UPDATE entries SET start_at = ?, end_at = ?, note = ?, source = CASE WHEN ? IS NULL THEN source ELSE 'manual' END WHERE id = ?",
-                (start, end, note, end, entry_id),
+                "UPDATE entries SET start_at = ?, end_at = ?, note = ?, project_id = ?, "
+                "source = CASE WHEN ? IS NULL THEN source ELSE 'manual' END WHERE id = ?",
+                (start, end, note, project_id, end, entry_id),
             )
         flash("Eintrag aktualisiert.", "success")
         return redirect(url_for("times", monat=day.strftime("%Y-%m")))
@@ -380,21 +443,103 @@ def create_app(test_config=None):
     def times_csv():
         first, last, _ = month_from_request()
         profile = store.profile(current_user.uid)
+        project_filter = request.args.get("projekt", type=int)
         output = io.StringIO()
         writer = csv.writer(output, delimiter=";")
-        writer.writerow(["Datum", "Tag", "Zeiten", "Brutto", "Pausenabzug", "Netto", "Netto (h)", "Soll", "Differenz", "Hinweis", "Notizen"])
-        for report in range_report(store, current_user.uid, profile, first, last):
+        reports = range_report(store, current_user.uid, profile, first, last, project_id=project_filter)
+        suffix = ""
+        if project_filter:
+            project = store.project(current_user.uid, project_filter)
+            suffix = "-" + re.sub(r"[^A-Za-z0-9_-]+", "-", project["name"]).strip("-") if project else ""
+        if request.args.get("art") == "eintraege":
+            writer.writerow(["Datum", "Beginn", "Ende", "Dauer", "Stunden", "Projekt", "Kunde", "Stundensatz", "Betrag", "Notiz"])
+            for report in reports:
+                for begin, finish, entry in report["segments"]:
+                    seconds = finish - begin
+                    rate = entry["project_rate"]
+                    writer.writerow([
+                        report["day"].strftime("%d.%m.%Y"), fmt_time(begin), fmt_time(finish), fmt_duration(seconds),
+                        f"{seconds / 3600:.2f}".replace(".", ","), entry["project_name"] or "", entry["project_client"] or "",
+                        f"{rate / 100:.2f}".replace(".", ",") if rate else "",
+                        f"{amount_cents(seconds, rate) / 100:.2f}".replace(".", ",") if rate else "", entry["note"],
+                    ])
+            filename = f"stempel-eintraege-{first:%Y-%m}{suffix}.csv"
+            return Response("\ufeff" + output.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        writer.writerow(["Datum", "Tag", "Zeiten", "Brutto", "Pausenabzug", "Netto", "Netto (h)", "Soll", "Differenz", "Hinweis", "Projekte", "Notizen"])
+        for report in reports:
             spans = ", ".join(f"{fmt_time(begin)}–{fmt_time(finish)}" for begin, finish, _ in report["segments"])
             hint = report["holiday"] or (ABSENCE_LABELS[report["absence"]["kind"]] + (" (½)" if report["absence"]["half"] else "") if report["absence"] else "")
             notes = " | ".join(entry["note"] for _, _, entry in report["segments"] if entry["note"])
+            project_names = ", ".join(dict.fromkeys(entry["project_name"] for _, _, entry in report["segments"] if entry["project_name"]))
             writer.writerow([
                 report["day"].strftime("%d.%m.%Y"), report["weekday"], spans, fmt_duration(report["worked"]),
                 fmt_duration(report["deducted"]), fmt_duration(report["net"]), f"{report['net'] / 3600:.2f}".replace(".", ","),
-                fmt_duration(report["target"]), fmt_duration(report["diff"], signed=True), hint, notes,
+                fmt_duration(report["target"]), fmt_duration(report["diff"], signed=True), hint, project_names, notes,
             ])
-        filename = f"stempel-{current_user.username}-{first:%Y-%m}.csv"
+        filename = f"stempel-{first:%Y-%m}{suffix}.csv"
         return Response("﻿" + output.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    # ---------------------------------------------------------------- Projekte
+
+    @app.route("/projekte", methods=["GET", "POST"])
+    @login_required
+    def projects():
+        if request.method == "POST":
+            project_id = request.form.get("project_id", type=int)
+            name = " ".join(request.form.get("name", "").split())[:80]
+            client = " ".join(request.form.get("client", "").split())[:80]
+            rate = parse_money(request.form.get("rate"))
+            color = request.form.get("color", "blue")
+            if not name or rate == -1 or color not in PROJECT_COLORS:
+                flash("Bitte einen Namen und ggf. einen gültigen Stundensatz angeben.", "error")
+                return redirect(url_for("projects", edit=project_id) if project_id else url_for("projects"))
+            try:
+                with store.connect() as connection:
+                    if project_id:
+                        if not connection.execute(
+                                "UPDATE projects SET name = ?, client = ?, rate_cents = ?, color = ? WHERE id = ? AND user_id = ?",
+                                (name, client, rate, color, project_id, current_user.uid)).rowcount:
+                            abort(404)
+                    else:
+                        connection.execute("INSERT INTO projects (user_id, name, client, rate_cents, color) VALUES (?, ?, ?, ?, ?)",
+                                           (current_user.uid, name, client, rate, color))
+            except sqlite3.IntegrityError:
+                flash("Ein Projekt mit diesem Namen gibt es schon.", "error")
+                return redirect(url_for("projects"))
+            flash(f"Projekt „{name}“ gespeichert.", "success")
+            return redirect(url_for("projects"))
+        first, last, following = month_from_request()
+        profile = store.profile(current_user.uid)
+        all_projects = store.projects(current_user.uid)
+        month = project_summary(range_report(store, current_user.uid, profile, first, last), all_projects)
+        month_by_id = {row["project"]["id"] if row["project"] else None: row for row in month}
+        with store.connect() as connection:
+            totals = {row["project_id"]: row["seconds"] for row in connection.execute(
+                "SELECT project_id, SUM(end_at - start_at) AS seconds FROM entries WHERE user_id = ? AND end_at IS NOT NULL GROUP BY project_id",
+                (current_user.uid,))}
+        edit = store.project(current_user.uid, request.args.get("edit", type=int)) if request.args.get("edit") else None
+        return render_template(
+            "projects.html", projects=all_projects, month=month_by_id, totals=totals, first=first, edit=edit,
+            previous=(first - timedelta(days=1)).strftime("%Y-%m"), following=following.strftime("%Y-%m"),
+            month_seconds=sum(row["seconds"] for row in month), month_amount=sum(row["amount"] for row in month),
+        )
+
+    @app.post("/projekte/<int:project_id>/<action>")
+    @login_required
+    def manage_project(project_id, action):
+        project = store.project(current_user.uid, project_id)
+        if not project or action not in ("archive", "delete"):
+            abort(404)
+        with store.connect() as connection:
+            if action == "archive":
+                connection.execute("UPDATE projects SET archived = 1 - archived WHERE id = ?", (project_id,))
+                flash(f"„{project['name']}“ {'wieder aktiv' if project['archived'] else 'archiviert'}.", "success")
+            else:
+                connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+                flash(f"„{project['name']}“ gelöscht. Die Einträge bleiben ohne Projekt erhalten.", "success")
+        return redirect(url_for("projects"))
 
     # ---------------------------------------------------------------- Abwesenheit
 
@@ -463,7 +608,9 @@ def create_app(test_config=None):
                 if len(host) > 253 or not re.fullmatch(r"[A-Za-z0-9.\-:]*", host) or host.startswith("-") or idle is None or not 2 <= idle <= 240:
                     flash("Bitte einen gültigen Hostnamen bzw. eine IP und eine Leerlaufzeit von 2–240 Minuten angeben.", "error")
                 else:
-                    store.update_profile(current_user.uid, device_host=host, idle_minutes=idle)
+                    valid, project_id = project_from_form("default_project_id")
+                    store.update_profile(current_user.uid, device_host=host, idle_minutes=idle,
+                                         default_project_id=project_id if valid else None)
                     flash("Automatik gespeichert.", "success")
             elif action == "test":
                 host = store.profile(current_user.uid)["device_host"]
@@ -487,6 +634,7 @@ def create_app(test_config=None):
             tokens = [dict(row) for row in connection.execute(
                 "SELECT id, name, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC", (current_user.uid,))]
         return render_template("automation.html", profile=store.profile(current_user.uid), tokens=tokens,
+                               projects=store.projects(current_user.uid, include_archived=False),
                                new_token=session.pop("new_token", None), device=monitor.snapshot(current_user.uid),
                                base_url=request.host_url.rstrip("/"))
 
@@ -534,25 +682,31 @@ def create_app(test_config=None):
             "state": "in" if entry else "out",
             "since": to_local(entry["start_at"]).isoformat() if entry else None,
             "source": entry["source"] if entry else None,
+            "project": entry["project_name"] if entry else None,
             "today_net_minutes": report["net"] // 60,
             "today_target_minutes": report["target"] // 60,
             "balance_minutes": saldo // 60,
-            "message": api_message(result, entry, report, saldo, now),
+            "message": api_message(result, entry, report, saldo, now, bool(profile["track_balance"])),
         }
 
-    def api_message(result, entry, report, saldo, now):
+    def api_message(result, entry, report, saldo, now, profile_tracks_balance=True):
         today_text = f"heute {fmt_duration(report['net'])} h"
         if report["target"]:
             today_text += f" von {fmt_duration(report['target'])} h"
-        summary = f"{today_text} · Saldo {fmt_duration(saldo, signed=True)}"
+        summary = today_text
+        if profile_tracks_balance:
+            summary += f" · Saldo {fmt_duration(saldo, signed=True)}"
         if entry:
             since = fmt_time(entry["start_at"])
+            project = f" · {entry['project_name']}" if entry["project_name"] else ""
             if result == "started":
-                lead = f"✅ Eingestempelt um {since}"
+                lead = f"✅ Eingestempelt um {since}{project}"
+            elif result == "switched":
+                lead = f"🔀 Gewechselt um {since} zu {entry['project_name'] or 'ohne Projekt'}"
             elif result == "unchanged":
-                lead = f"Schon eingestempelt seit {since}"
+                lead = f"Schon eingestempelt seit {since}{project}"
             else:
-                lead = f"⏱ Läuft seit {since}"
+                lead = f"⏱ Läuft seit {since}{project}"
             finish = finish_estimate(report, now)
             return f"{lead} · {today_text}" + (f" · Soll erreicht ca. {fmt_time(finish)}" if finish else "")
         if result == "stopped":
@@ -574,13 +728,24 @@ def create_app(test_config=None):
         if user_id is None:
             return api_response({"error": "Ungültiges oder fehlendes Token"}, 401)
         data = request.get_json(silent=True) or request.form
-        action = (data.get("action") or request.args.get("action") or "toggle").strip().lower()
+        action = str(data.get("action") or request.args.get("action") or "toggle").strip().lower()
+        reference = data.get("project") or request.args.get("project")
+        project_id = None
+        if reference not in (None, ""):
+            project = store.find_project(user_id, reference)
+            if not project:
+                return api_response({"error": f"Projekt „{reference}“ nicht gefunden"}, 400)
+            project_id = project["id"]
         if action == "in":
-            result = "started" if clock.clock_in(store, user_id, "api") else "unchanged"
+            entry = store.open_entry(user_id)
+            if entry and project_id is not None and entry["project_id"] != project_id:
+                result = "switched" if clock.switch(store, user_id, project_id, "api") else "unchanged"
+            else:
+                result = "started" if clock.clock_in(store, user_id, "api", project_id=project_id) else "unchanged"
         elif action == "out":
             result = "stopped" if clock.clock_out(store, user_id) else "unchanged"
         elif action == "toggle":
-            result = {"in": "started", "out": "stopped"}[clock.toggle(store, user_id, "api")]
+            result = {"in": "started", "out": "stopped", "switched": "switched"}[clock.toggle(store, user_id, "api", project_id=project_id)]
         elif action == "heartbeat":
             result = clock.signal(store, user_id, "heartbeat")
         else:
@@ -617,7 +782,8 @@ def create_app(test_config=None):
                         or not 0 <= vacation <= 100 or (start_text and not parse_day(start_text))):
                     flash("Bitte die Angaben zum Arbeitszeitmodell prüfen.", "error")
                 else:
-                    store.update_profile(current_user.uid, weekly_minutes=weekly, workdays=workdays, region=region,
+                    store.update_profile(current_user.uid, track_balance=1 if request.form.get("track_balance") else 0,
+                                         weekly_minutes=weekly, workdays=workdays, region=region,
                                          break_rule=1 if request.form.get("break_rule") else 0, vacation_days=vacation,
                                          balance_start=start_text or None, balance_offset=offset)
                     flash("Arbeitszeitmodell gespeichert.", "success")

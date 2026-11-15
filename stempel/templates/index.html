@@ -1,35 +1,59 @@
 {% extends 'base.html' %}
+{% from '_macros.html' import project_chip, project_select %}
 {% block title %}Heute{% endblock %}
 {% block content %}
+{% set tracks = profile.track_balance %}
 <div class="page-heading split">
   <div><span class="eyebrow">{{ report.weekday | upper }}, {{ report.day.strftime('%d.%m.%Y') }}</span><h1>Hallo {{ current_user.username }}<span class="accent">.</span></h1>
-    <p>{% if report.holiday %}Heute ist Feiertag: {{ report.holiday }}.{% elif report.absence %}Heute eingetragen: {{ ABSENCE_LABELS[report.absence.kind] }}{% if report.absence.half %} (halber Tag){% endif %}.{% elif not report.target %}Heute ist kein Arbeitstag.{% else %}Tagessoll {{ report.target | duration }} h.{% endif %}</p></div>
+    <p>{% if report.holiday %}Heute ist Feiertag: {{ report.holiday }}.{% elif report.absence %}Heute eingetragen: {{ ABSENCE_LABELS[report.absence.kind] }}{% if report.absence.half %} (halber Tag){% endif %}.{% elif tracks and not report.target %}Heute ist kein Arbeitstag.{% elif tracks %}Tagessoll {{ report.target | duration }} h.{% else %}Woran arbeitest du heute?{% endif %}</p></div>
 </div>
 
 <section class="stamp-card card {% if open_entry %}is-running{% endif %}">
   <div class="stamp-status">
     <span class="section-label">{% if open_entry %}EINGESTEMPELT SEIT {{ open_entry.start_at | clocktime }} · {{ SOURCE_LABELS.get(open_entry.source, open_entry.source) | upper }}{% else %}AUSGESTEMPELT{% endif %}</span>
+    {% if open_entry %}<div class="running-project">{{ project_chip(open_entry.project_name, open_entry.project_color, open_entry.project_client) }}{% if open_entry.note %} <span class="muted">{{ open_entry.note }}</span>{% endif %}</div>{% endif %}
     <div class="timer" {% if open_entry %}data-running="1"{% endif %} data-net="{{ report.net }}" data-now="{{ now }}">{{ report.net | duration }}</div>
-    <p class="muted">heute netto{% if report.deducted %} · {{ report.deducted | duration }} Pause abgezogen{% endif %}{% if finish %} · Soll erreicht ca. <strong>{{ finish | clocktime }}</strong>{% elif report.target and report.net >= report.target %} · Soll erreicht ✓{% endif %}</p>
+    <p class="muted">heute {{ 'netto' if profile.break_rule else 'erfasst' }}{% if report.deducted %} · {{ report.deducted | duration }} Pause abgezogen{% endif %}{% if tracks and finish %} · Soll erreicht ca. <strong>{{ finish | clocktime }}</strong>{% elif tracks and report.target and report.net >= report.target %} · Soll erreicht ✓{% endif %}</p>
     {% if open_entry and now - open_entry.start_at > 12 * 3600 %}<p class="notice error">Dieser Eintrag läuft seit über 12 Stunden – vergessen auszustempeln? Unter <a href="{{ url_for('times', edit=open_entry.id) }}">Zeiten</a> korrigieren.</p>{% endif %}
   </div>
-  <form method="post" action="{{ url_for('stamp') }}" class="stamp-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="stamp-actions">
     {% if open_entry %}
-    <input type="hidden" name="action" value="out"><button class="stamp-button out" type="submit"><span>■</span>Ausstempeln</button>
-    {% else %}
-    <input type="hidden" name="action" value="in"><input class="note-input" name="note" maxlength="200" placeholder="Notiz (optional)"><button class="stamp-button" type="submit"><span>▶</span>Einstempeln</button>
+    <form method="post" action="{{ url_for('stamp') }}" class="stamp-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="out">
+      <button class="stamp-button out" type="submit"><span>■</span>Ausstempeln</button>
+    </form>
+    {% if projects %}
+    <form method="post" action="{{ url_for('stamp') }}" class="switch-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="switch">
+      <select name="project_id" aria-label="Projekt wechseln"><option value="">Ohne Projekt</option>{% for p in projects %}<option value="{{ p.id }}" {% if p.id == open_entry.project_id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+      <button class="secondary-button" type="submit">Wechseln</button>
+    </form>
     {% endif %}
-  </form>
+    {% else %}
+    <form method="post" action="{{ url_for('stamp') }}" class="stamp-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="in">
+      {% if projects %}<select name="project_id" aria-label="Projekt"><option value="">Ohne Projekt</option>{% for p in projects %}<option value="{{ p.id }}" {% if p.id == last_project %}selected{% endif %}>{{ p.name }}{% if p.client %} · {{ p.client }}{% endif %}</option>{% endfor %}</select>{% else %}<a class="text-link" href="{{ url_for('projects') }}">+ Projekt anlegen</a>{% endif %}
+      <input class="note-input" name="note" maxlength="200" placeholder="Notiz (optional)">
+      <button class="stamp-button" type="submit"><span>▶</span>Einstempeln</button>
+    </form>
+    {% endif %}
+  </div>
 </section>
 
 <div class="stat-grid">
+  {% if tracks %}
   <div class="stat card"><span class="section-label">SALDO BIS GESTERN</span><strong class="{{ 'negative' if balance < 0 else 'positive' }}">{{ signed(balance) }}</strong><small>inkl. heute: {{ signed(balance_now) }}</small></div>
   <div class="stat card"><span class="section-label">DIESE WOCHE</span><strong>{{ week_net | duration }}</strong><small>von {{ week_target | duration }} h Soll</small></div>
   <div class="stat card"><span class="section-label">RESTURLAUB {{ report.day.year }}</span><strong>{{ '%g' | format(vacation_left) }}</strong><small>Tage von {{ '%g' | format(profile.vacation_days) }}</small></div>
+  {% else %}
+  <div class="stat card"><span class="section-label">DIESE WOCHE</span><strong>{{ week_net | duration }}</strong><small>{{ week_net | hours }} h</small></div>
+  <div class="stat card"><span class="section-label">{{ MONTHS[report.day.month - 1] | upper }}</span><strong>{{ month_worked | duration }}</strong><small>{{ month_worked | hours }} h in {{ month_projects | length }} Projekt(en)</small></div>
+  <div class="stat card"><span class="section-label">ABRECHENBAR {{ MONTHS[report.day.month - 1] | upper }}</span><strong>{{ month_amount | money if month_amount else '–' }}</strong><small>{% if month_amount %}nach Stundensätzen{% else %}Stundensatz im Projekt hinterlegen{% endif %}</small></div>
+  {% endif %}
   <div class="stat card"><span class="section-label">AUTOMATIK</span>{% if profile.device_host %}<strong class="small-strong"><span class="status-dot {{ 'online' if device.online else ('offline' if device else '') }}"></span>{{ 'online' if device.online else ('offline' if device else 'prüfe …') }}</strong><small>{{ profile.device_host }}</small>{% else %}<strong class="small-strong">aus</strong><small><a class="text-link" href="{{ url_for('automation') }}">einrichten →</a></small>{% endif %}</div>
 </div>
 
+<div class="two-col">
 <section class="week card">
   <div class="section-heading"><span class="section-label">WOCHE</span><a class="text-link" href="{{ url_for('times') }}">Alle Zeiten →</a></div>
   {% set scale = [week | map(attribute='net') | max, week | map(attribute='target') | max, 1] | max %}
@@ -41,11 +65,18 @@
   </div>
   {% endfor %}
 </section>
+<section class="card">
+  <div class="section-heading"><span class="section-label">{{ MONTHS[report.day.month - 1] | upper }} NACH PROJEKT</span><a class="text-link" href="{{ url_for('projects') }}">Projekte →</a></div>
+  {% for row in month_projects %}
+  <div class="project-row">{{ project_chip(row.project.name if row.project else None, row.project.color if row.project else 'grey', row.project.client if row.project else '') }}<span class="project-figures"><strong>{{ row.seconds | duration }} h</strong>{% if row.amount %}<small>{{ row.amount | money }}</small>{% endif %}</span></div>
+  {% else %}<p class="muted">Diesen Monat noch nichts erfasst.</p>{% endfor %}
+</section>
+</div>
 
 {% if report.segments %}
 <section class="card">
   <div class="section-heading"><span class="section-label">HEUTE</span></div>
-  <ul class="entry-list">{% for begin, finish, entry in report.segments %}<li><span class="mono">{{ begin | clocktime }} – {{ 'läuft' if entry.end_at is none else finish | clocktime }}</span><span class="tag">{{ SOURCE_LABELS.get(entry.source, entry.source) }}</span><span class="muted">{{ entry.note }}</span></li>{% endfor %}</ul>
+  <ul class="entry-list">{% for begin, finish, entry in report.segments %}<li><span class="mono">{{ begin | clocktime }} – {{ 'läuft' if entry.end_at is none else finish | clocktime }}</span>{{ project_chip(entry.project_name, entry.project_color) }}<span class="tag">{{ SOURCE_LABELS.get(entry.source, entry.source) }}</span><span class="muted">{{ entry.note }}</span><a class="text-link push-right" href="{{ url_for('times', edit=entry.id) }}#entry-form">Bearbeiten</a></li>{% endfor %}</ul>
 </section>
 {% endif %}
 {% endblock %}

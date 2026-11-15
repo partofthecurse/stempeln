@@ -1,38 +1,43 @@
 {% extends 'base.html' %}
+{% from '_macros.html' import project_select %}
 {% block title %}Zeiten{% endblock %}
 {% block content %}
+{% set tracks = nav_profile.track_balance %}{% set m = first.strftime('%Y-%m') %}
 <div class="page-heading split">
-  <div><span class="eyebrow">ÜBERSICHT</span><h1>{{ MONTHS[first.month - 1] }} {{ first.year }}<span class="accent">.</span></h1><p>Netto {{ total_net | duration }} h · Soll bis heute {{ total_target | duration }} h · Monat {{ signed(total_diff) }} · Saldo {{ signed(month_balance) }}</p></div>
+  <div><span class="eyebrow">ÜBERSICHT</span><h1>{{ MONTHS[first.month - 1] }} {{ first.year }}<span class="accent">.</span></h1><p>{% if tracks %}Netto {{ total_net | duration }} h · Soll bis heute {{ total_target | duration }} h · Monat {{ signed(total_diff) }} · Saldo {{ signed(month_balance) }}{% else %}{{ total_net | duration }} h erfasst ({{ total_net | hours }} h){% endif %}</p></div>
   <div class="heading-actions">
-    <a class="icon-button" href="{{ url_for('times', monat=previous) }}" aria-label="Vormonat">‹</a>
-    <a class="secondary-button" href="{{ url_for('times') }}">Heute</a>
-    <a class="icon-button" href="{{ url_for('times', monat=following) }}" aria-label="Folgemonat">›</a>
-    <a class="secondary-button" href="{{ url_for('times_csv', monat=first.strftime('%Y-%m')) }}">CSV ↓</a>
+    {% if projects %}<form method="get" class="filter-form"><input type="hidden" name="monat" value="{{ m }}"><select name="projekt" aria-label="Projektfilter" data-autosubmit><option value="">Alle Projekte</option><option value="0" {% if project_filter == 0 %}selected{% endif %}>Ohne Projekt</option>{% for p in projects %}<option value="{{ p.id }}" {% if p.id == project_filter %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select><noscript><button class="secondary-button" type="submit">Filtern</button></noscript></form>{% endif %}
+    <a class="icon-button" href="{{ url_for('times', monat=previous, projekt=project_filter) }}" aria-label="Vormonat">‹</a>
+    <a class="secondary-button" href="{{ url_for('times', projekt=project_filter) }}">Heute</a>
+    <a class="icon-button" href="{{ url_for('times', monat=following, projekt=project_filter) }}" aria-label="Folgemonat">›</a>
+    <a class="secondary-button" href="{{ url_for('times_csv', monat=m, projekt=project_filter, art='eintraege') }}" title="Eine Zeile pro Eintrag mit Projekt, Stunden und Betrag">CSV Einträge ↓</a>
+    <a class="secondary-button" href="{{ url_for('times_csv', monat=m, projekt=project_filter) }}" title="Eine Zeile pro Tag">CSV Tage ↓</a>
   </div>
 </div>
 
 <div class="times-layout">
   <section class="card">
     <table class="month-table">
-      <thead><tr><th>Tag</th><th>Zeiten</th><th class="num">Pause</th><th class="num">Netto</th><th class="num">Soll</th><th class="num">±</th></tr></thead>
+      <thead><tr><th>Tag</th><th>Zeiten</th><th class="num">Pause</th><th class="num">{{ 'Netto' if nav_profile.break_rule else 'Summe' }}</th>{% if tracks %}<th class="num">Soll</th><th class="num">±</th>{% endif %}</tr></thead>
       <tbody>
       {% for r in reports %}
       <tr class="{% if r.day == today %}is-today{% endif %} {% if not r.target and not r.net %}is-off{% endif %}">
-        <td class="day-cell"><a href="{{ url_for('times', monat=first.strftime('%Y-%m'), tag=r.day.isoformat()) }}#entry-form"><strong>{{ r.weekday }}</strong> {{ r.day.strftime('%d.') }}</a></td>
+        <td class="day-cell"><a href="{{ url_for('times', monat=m, tag=r.day.isoformat(), projekt=project_filter) }}#entry-form"><strong>{{ r.weekday }}</strong> {{ r.day.strftime('%d.') }}</a></td>
         <td>
           {% if r.holiday %}<span class="tag holiday">{{ r.holiday }}</span>{% endif %}
           {% if r.absence %}<span class="tag absence">{{ ABSENCE_LABELS[r.absence.kind] }}{% if r.absence.half %} ½{% endif %}</span>{% endif %}
-          {% for begin, finish, entry in r.segments %}<a class="span-chip {% if edit and edit.id == entry.id %}selected{% endif %}" href="{{ url_for('times', monat=first.strftime('%Y-%m'), edit=entry.id) }}#entry-form" title="{{ SOURCE_LABELS.get(entry.source, entry.source) }}{% if entry.note %}: {{ entry.note }}{% endif %}">{{ begin | clocktime }}–{{ 'jetzt' if entry.end_at is none else finish | clocktime }}{% if entry.note %} ✎{% endif %}</a>{% endfor %}
+          {% for begin, finish, entry in r.segments %}<a class="span-chip pc-{{ entry.project_color or 'none' }} {% if edit and edit.id == entry.id %}selected{% endif %}" href="{{ url_for('times', monat=m, edit=entry.id, projekt=project_filter) }}#entry-form" title="{{ entry.project_name or 'Ohne Projekt' }} · {{ SOURCE_LABELS.get(entry.source, entry.source) }}{% if entry.note %}: {{ entry.note }}{% endif %}"><span class="dot"></span>{{ begin | clocktime }}–{{ 'jetzt' if entry.end_at is none else finish | clocktime }}{% if entry.project_name %} <small>{{ entry.project_name }}</small>{% endif %}{% if entry.note %} ✎{% endif %}</a>{% endfor %}
         </td>
         <td class="num muted">{{ (r.deducted + r.breaks) | duration if r.deducted or r.breaks else '' }}</td>
         <td class="num">{{ r.net | duration if r.net else '' }}</td>
-        <td class="num muted">{{ r.target | duration if r.target else '' }}</td>
-        <td class="num {{ 'negative' if r.diff < 0 else 'positive' }}">{{ signed(r.diff) if r.day <= today and (r.net or r.target) else '' }}</td>
+        {% if tracks %}<td class="num muted">{{ r.target | duration if r.target else '' }}</td>
+        <td class="num {{ 'negative' if r.diff < 0 else 'positive' }}">{{ signed(r.diff) if r.day <= today and (r.net or r.target) else '' }}</td>{% endif %}
       </tr>
       {% endfor %}
       </tbody>
     </table>
-    <p class="hint">Pause = tatsächliche Pausen ab 15 Min. plus automatischer Abzug nach ArbZG. Tag anklicken, um etwas nachzutragen.</p>
+    <p class="hint">{% if nav_profile.break_rule %}Pause = tatsächliche Pausen ab 15 Min. plus automatischer Abzug nach ArbZG. {% endif %}Tag anklicken, um etwas nachzutragen.</p>
+    {% if month_projects %}<div class="project-sums">{% for row in month_projects %}<span class="project-chip pc-{{ row.project.color if row.project else 'grey' }}"><span class="dot"></span>{{ row.project.name if row.project else 'Ohne Projekt' }} <strong>{{ row.seconds | duration }} h</strong>{% if row.amount %} <small>{{ row.amount | money }}</small>{% endif %}</span>{% endfor %}</div>{% endif %}
   </section>
 
   <section class="card sticky" id="entry-form">
@@ -42,8 +47,9 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Datum (Beginn)<input type="date" name="day" value="{{ edit.start_day }}" required></label>
       <div class="field-row"><label>Beginn<input type="time" name="start" value="{{ edit.start_at | clocktime }}" required></label><label>Ende{% if edit.end_at is none %} <span class="hint">(leer = läuft)</span>{% endif %}<input type="time" name="end" value="{{ edit.end_at | clocktime if edit.end_at else '' }}" {% if edit.end_at is not none %}required{% endif %}></label></div>
+      {{ project_select(projects, edit.project_id) }}
       <label>Notiz<input name="note" maxlength="200" value="{{ edit.note }}"></label>
-      <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button><a class="subtle-link" href="{{ url_for('times', monat=first.strftime('%Y-%m')) }}">Abbrechen</a></div>
+      <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button><a class="subtle-link" href="{{ url_for('times', monat=m, projekt=project_filter) }}">Abbrechen</a></div>
     </form>
     <form method="post" action="{{ url_for('delete_entry', entry_id=edit.id) }}" data-confirm="Diesen Eintrag löschen?" class="delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">Eintrag löschen</button></form>
     {% else %}
@@ -52,7 +58,8 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Datum<input type="date" name="day" value="{{ default_day }}" required></label>
       <div class="field-row"><label>Beginn<input type="time" name="start" required></label><label>Ende<input type="time" name="end" required></label></div>
-      <label>Notiz <span class="hint">optional, z. B. Projekt</span><input name="note" maxlength="200"></label>
+      {{ project_select(projects, project_filter or last_project) }}
+      <label>Notiz <span class="hint">optional, z. B. Ticket oder Tätigkeit</span><input name="note" maxlength="200"></label>
       <button class="primary-button" type="submit">Eintragen <span>→</span></button>
     </form>
     <p class="hint">Endet ein Eintrag vor seinem Beginn, zählt er über Mitternacht.</p>

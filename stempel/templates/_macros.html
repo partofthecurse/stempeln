@@ -1,0 +1,6 @@
+{% macro project_chip(name, color, client='') -%}
+<span class="project-chip pc-{{ color or 'grey' }}"><span class="dot"></span>{{ name or 'Ohne Projekt' }}{% if client %} <small>{{ client }}</small>{% endif %}</span>
+{%- endmacro %}
+{% macro project_select(projects, selected=None, name='project_id', label='Projekt', empty='Ohne Projekt') -%}
+<label>{{ label }}<select name="{{ name }}"><option value="">{{ empty }}</option>{% for p in projects if not p.archived or p.id == selected %}<option value="{{ p.id }}" {% if p.id == selected %}selected{% endif %}>{{ p.name }}{% if p.client %} · {{ p.client }}{% endif %}{% if p.archived %} (archiviert){% endif %}</option>{% endfor %}</select></label>
+{%- endmacro %}

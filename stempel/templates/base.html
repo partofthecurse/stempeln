@@ -21,8 +21,8 @@
       <a class="brand" href="{{ url_for('index') }}"><img class="brand-mark" src="{{ url_for('static', filename='icons/app-icon.svg') }}" alt=""><span>stempel<span class="accent">.</span></span></a>
       {% if current_user.is_authenticated %}
       <nav class="navigation" aria-label="Hauptnavigation">
-        {% for endpoint, label in [('index', 'Heute'), ('times', 'Zeiten'), ('absences', 'Abwesenheit'), ('automation', 'Automatik'), ('account', 'Konto')] %}
-        <a class="{% if request.endpoint == endpoint %}active{% endif %}" href="{{ url_for(endpoint) }}">{{ label }}</a>
+        {% for endpoint, label in [('index', 'Heute'), ('times', 'Zeiten'), ('projects', 'Projekte'), ('absences', 'Abwesenheit'), ('automation', 'Automatik'), ('account', 'Konto')] %}
+        {% if endpoint != 'absences' or nav_profile.track_balance %}<a class="{% if request.endpoint == endpoint %}active{% endif %}" href="{{ url_for(endpoint) }}">{{ label }}</a>{% endif %}
         {% endfor %}
         {% if current_user.role == 'admin' %}<a class="{% if request.endpoint == 'users' %}active{% endif %}" href="{{ url_for('users') }}">Benutzer</a>{% endif %}
       </nav>
