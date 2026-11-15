@@ -113,7 +113,8 @@ def signal(store, user_id, source="heartbeat", now=None):
                 return "suppressed"
             connection.execute("UPDATE profiles SET auto_suppressed = 0 WHERE user_id = ?", (user_id,))
         default_project = connection.execute(
-            "SELECT id FROM projects WHERE id = ? AND user_id = ? AND archived = 0", (profile["default_project_id"], user_id)
+            "SELECT id FROM projects WHERE id = ? AND archived = 0 AND (user_id = ? OR id IN "
+            "(SELECT project_id FROM project_shares WHERE user_id = ?))", (profile["default_project_id"], user_id, user_id)
         ).fetchone()
         connection.execute(
             "INSERT INTO entries (user_id, start_at, last_seen, source, project_id) VALUES (?, ?, ?, ?, ?)",

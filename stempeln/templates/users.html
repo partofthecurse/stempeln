@@ -4,7 +4,8 @@
 <div class="page-heading"><span class="eyebrow">{{ _('VERWALTUNG') }}</span><h1>{{ _('Benutzer') }}<span class="accent">.</span></h1><p>{{ _('Jedes Konto erfasst seine eigenen Zeiten.') }}</p></div>
 <div class="settings-layout users-layout">
   <section class="card settings-block"><span class="section-label">{{ _('KONTEN') }}</span><h2>{{ _('Benutzer verwalten') }}</h2>
-    {% for user in users %}<div class="user-row"><div><strong>{{ user.username }}</strong><div class="user-details">{{ 'Admin' if user.role == 'admin' else _('Benutzer') }} · {{ _('Aktiv') if user.active else _('Deaktiviert') }} · {{ _('2FA aktiv') if user.totp_enabled else _('Ohne 2FA') }}</div></div><div class="user-actions">
+    {% for user in users %}<div class="user-row"><div><strong>{{ user.username }}</strong><div class="user-details">{{ 'Admin' if user.role == 'admin' else _('Benutzer') }} · {{ _('Aktiv') if user.active else _('Deaktiviert') }} · {{ _('2FA aktiv') if user.totp_enabled else _('Ohne 2FA') }}{% if user.shared_projects or user.shared_customers %} · {{ _('%(projects)s Projekt(e), %(customers)s Kunde(n) freigegeben', projects=user.shared_projects, customers=user.shared_customers) }}{% endif %}</div></div><div class="user-actions">
+    <a class="text-button" href="{{ url_for('users', freigaben=user.id) }}#freigaben">{{ _('Freigaben') }}</a>
     {% for action, label in [('toggle', _('Deaktivieren') if user.active else _('Aktivieren')), ('role', _('Rolle wechseln')), ('reset-2fa', _('2FA zurücksetzen'))] %}<form method="post" action="{{ url_for('manage_user', user_id=user.id, action=action) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button" type="submit">{{ label }}</button></form>{% endfor %}
     <form method="post" action="{{ url_for('manage_user', user_id=user.id, action='delete') }}" data-confirm="{{ _('Dieses Benutzerkonto samt aller erfassten Zeiten wirklich löschen?') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button" type="submit">{{ _('Löschen') }}</button></form>
     <details><summary>{{ _('Passwort setzen') }}</summary><form method="post" action="{{ url_for('manage_user', user_id=user.id, action='password') }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="password" name="password" minlength="12" placeholder="{{ _('Neues Passwort') }}" autocomplete="new-password" required><button class="secondary-button" type="submit">{{ _('Setzen') }}</button></form></details>
@@ -12,4 +13,25 @@
   </section>
   <section class="card settings-block"><span class="section-label">{{ _('NEUES KONTO') }}</span><h2>{{ _('Benutzer hinzufügen') }}</h2><form method="post" class="form-stack"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>{{ _('Benutzername') }}<input name="username" maxlength="80" required></label><label>{{ _('Passwort') }}<input type="password" name="password" minlength="12" autocomplete="new-password" required></label><label>{{ _('Rolle') }}<select name="role"><option value="user">{{ _('Benutzer') }}</option><option value="admin">{{ _('Administrator') }}</option></select></label><button class="primary-button" type="submit">{{ _('Konto anlegen') }} <span>→</span></button></form></section>
 </div>
+<section class="card" id="freigaben">
+  <span class="section-label">{{ _('FREIGABEN') }}</span><h2>{{ _('Projekte und Kunden freigeben') }}</h2>
+  <p>{{ _('Freigegebene Projekte erscheinen beim Benutzer zum Stempeln und Abrechnen; freigegebene Kunden kann er bearbeiten und Rechnungen an sie schreiben. Erfasste Zeiten und Rechnungen bleiben je Benutzer getrennt. Löschen kann nur der Besitzer. Kunden freigegebener Projekte werden automatisch mit freigegeben.') }}</p>
+  <form method="get" action="{{ url_for('users') }}#freigaben" class="inline-form share-picker"><label>{{ _('Benutzer') }}<select name="freigaben" data-autosubmit><option value="">{{ _('– auswählen –') }}</option>{% for user in users %}<option value="{{ user.id }}" {% if target and target.id == user.id %}selected{% endif %}>{{ user.username }}</option>{% endfor %}</select></label><noscript><button class="secondary-button" type="submit">{{ _('Anzeigen') }}</button></noscript></form>
+  {% if target %}
+  <form method="post" action="{{ url_for('user_shares', user_id=target.id) }}" class="share-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="settings-layout">
+      <fieldset class="share-list"><legend>{{ _('Projekte') }}</legend>
+        {% for p in all_projects if p.user_id != target.id %}<label class="check"><input type="checkbox" name="project_id" value="{{ p.id }}" {% if p.id in shared_projects %}checked{% endif %}> <span><strong>{{ p.name }}</strong>{% if p.customer_name %} · {{ p.customer_name }}{% endif %}<br><small class="muted">{{ _('von %(owner)s', owner=p.owner_name) }}{% if p.archived %} · {{ _('archiviert') }}{% endif %}</small></span></label>
+        {% else %}<p class="muted">{{ _('Keine Projekte anderer Benutzer vorhanden.') }}</p>{% endfor %}
+      </fieldset>
+      <fieldset class="share-list"><legend>{{ _('Kunden') }}</legend>
+        {% for c in all_customers if c.user_id != target.id %}<label class="check"><input type="checkbox" name="customer_id" value="{{ c.id }}" {% if c.id in shared_customers %}checked{% endif %}> <span><strong>{{ c.name }}</strong><br><small class="muted">{{ _('von %(owner)s', owner=c.owner_name) }}{% if c.archived %} · {{ _('archiviert') }}{% endif %}</small></span></label>
+        {% else %}<p class="muted">{{ _('Keine Kunden anderer Benutzer vorhanden.') }}</p>{% endfor %}
+      </fieldset>
+    </div>
+    <div class="form-actions"><button class="primary-button" type="submit">{{ _('Freigaben für %(user)s speichern', user=target.username) }} <span>→</span></button></div>
+  </form>
+  {% endif %}
+</section>
 {% endblock %}

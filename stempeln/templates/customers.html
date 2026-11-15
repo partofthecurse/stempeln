@@ -12,7 +12,7 @@
       <tbody>
       {% for c in customers %}{% set st = stats.get(c.id, {}) %}
       <tr class="{% if c.archived %}is-off{% endif %}">
-        <td><strong>{{ c.name }}</strong>{% if c.number %} <small class="muted">{{ c.number }}</small>{% endif %}{% if c.tax_mode != 'domestic' %} <span class="tag">{{ 'Reverse Charge' if c.tax_mode == 'reverse_charge' else _('Drittland') }}</span>{% endif %}{% if c.leitweg_id %} <span class="tag">{{ _('Leitweg-ID') }}</span>{% endif %}{% if c.archived %} <span class="tag">{{ _('archiviert') }}</span>{% endif %}
+        <td><strong>{{ c.name }}</strong>{% if c.number %} <small class="muted">{{ c.number }}</small>{% endif %}{% if c.tax_mode != 'domestic' %} <span class="tag">{{ 'Reverse Charge' if c.tax_mode == 'reverse_charge' else _('Drittland') }}</span>{% endif %}{% if c.leitweg_id %} <span class="tag">{{ _('Leitweg-ID') }}</span>{% endif %}{% if c.archived %} <span class="tag">{{ _('archiviert') }}</span>{% endif %}{% if c.shared %} <span class="tag shared-tag">{{ _('von %(owner)s', owner=c.owner_name) }}</span>{% endif %}
           {% if not c.street or not c.city %}<br><small class="negative">{{ _('Anschrift fehlt') }}</small>{% endif %}</td>
         <td class="muted">{{ c.zip }} {{ c.city }}</td>
         <td class="num">{{ project_counts.get(c.id, '') }}</td>
@@ -40,7 +40,7 @@
     {% if edit %}
     <div class="inline-actions split-actions">
       <form method="post" action="{{ url_for('invoicing.manage_customer', customer_id=edit.id, action='archive') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">{{ _('Reaktivieren') if edit.archived else _('Archivieren') }}</button></form>
-      <form method="post" action="{{ url_for('invoicing.manage_customer', customer_id=edit.id, action='delete') }}" data-confirm="{{ _('Kunden löschen? Projekte bleiben ohne Kunde erhalten.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">{{ _('Löschen') }}</button></form>
+      {% if not edit.shared or current_user.role == 'admin' %}<form method="post" action="{{ url_for('invoicing.manage_customer', customer_id=edit.id, action='delete') }}" data-confirm="{{ _('Kunden löschen? Projekte bleiben ohne Kunde erhalten.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">{{ _('Löschen') }}</button></form>{% endif %}
     </div>
     {% endif %}
   </section>

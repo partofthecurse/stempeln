@@ -165,6 +165,18 @@ CREATE TABLE IF NOT EXISTS invoice_items (
     line_cents INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS invoice_items_invoice ON invoice_items(invoice_id, position);
+CREATE TABLE IF NOT EXISTS project_shares (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS customer_shares (
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (customer_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS project_shares_user ON project_shares(user_id);
+CREATE INDEX IF NOT EXISTS customer_shares_user ON customer_shares(user_id);
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -273,39 +285,78 @@ class Store:
             rows = connection.execute(query + " ORDER BY start_at", parameters).fetchall()
         return [dict(row) for row in rows]
 
-    PROJECT_COLUMNS = ("SELECT projects.*, COALESCE(customers.name, projects.client) AS client_name "
-                       "FROM projects LEFT JOIN customers ON customers.id = projects.customer_id ")
+    # Zugriff: eigene oder per Admin freigegebene Projekte/Kunden (Platzhalter: user_id, user_id)
+    PROJECT_ACCESS = "(projects.user_id = ? OR projects.id IN (SELECT project_id FROM project_shares WHERE user_id = ?))"
+    CUSTOMER_ACCESS = "(customers.user_id = ? OR customers.id IN (SELECT customer_id FROM customer_shares WHERE user_id = ?))"
+    PROJECT_COLUMNS = ("SELECT projects.*, COALESCE(customers.name, projects.client) AS client_name, owners.username AS owner_name "
+                       "FROM projects LEFT JOIN customers ON customers.id = projects.customer_id "
+                       "JOIN users AS owners ON owners.id = projects.user_id ")
 
     def projects(self, user_id, include_archived=True):
-        query = self.PROJECT_COLUMNS + "WHERE projects.user_id = ?" + ("" if include_archived else " AND projects.archived = 0")
+        query = self.PROJECT_COLUMNS + "WHERE " + self.PROJECT_ACCESS + ("" if include_archived else " AND projects.archived = 0")
         with self.connect() as connection:
-            rows = connection.execute(query + " ORDER BY projects.archived, projects.name COLLATE NOCASE", (user_id,)).fetchall()
-        return [dict(row) for row in rows]
+            rows = connection.execute(query + " ORDER BY projects.archived, projects.name COLLATE NOCASE, projects.id",
+                                      (user_id, user_id)).fetchall()
+        return [dict(row, shared=row["user_id"] != user_id) for row in rows]
 
     def project(self, user_id, project_id):
         with self.connect() as connection:
-            row = connection.execute(self.PROJECT_COLUMNS + "WHERE projects.user_id = ? AND projects.id = ?", (user_id, project_id)).fetchone()
-        return dict(row) if row else None
+            row = connection.execute(self.PROJECT_COLUMNS + "WHERE " + self.PROJECT_ACCESS + " AND projects.id = ?",
+                                     (user_id, user_id, project_id)).fetchone()
+        return dict(row, shared=row["user_id"] != user_id) if row else None
+
+    # ---------------------------------------------------------------- Freigaben (Admin)
+
+    def shares(self, user_id):
+        with self.connect() as connection:
+            projects = {row[0] for row in connection.execute("SELECT project_id FROM project_shares WHERE user_id = ?", (user_id,))}
+            customers = {row[0] for row in connection.execute("SELECT customer_id FROM customer_shares WHERE user_id = ?", (user_id,))}
+        return projects, customers
+
+    def set_shares(self, user_id, project_ids, customer_ids):
+        """Setzt die Freigaben eines Benutzers; Kunden freigegebener Projekte werden mit freigegeben."""
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            project_ids = {row[0] for row in connection.execute(
+                f"SELECT id FROM projects WHERE user_id != ? AND id IN ({','.join('?' * len(project_ids)) or 'NULL'})",
+                (user_id, *project_ids))}
+            customer_ids = set(customer_ids) | {row[0] for row in connection.execute(
+                f"SELECT customer_id FROM projects WHERE customer_id IS NOT NULL AND id IN ({','.join('?' * len(project_ids)) or 'NULL'})",
+                tuple(project_ids))}
+            customer_ids = {row[0] for row in connection.execute(
+                f"SELECT id FROM customers WHERE user_id != ? AND id IN ({','.join('?' * len(customer_ids)) or 'NULL'})",
+                (user_id, *customer_ids))}
+            connection.execute("DELETE FROM project_shares WHERE user_id = ?", (user_id,))
+            connection.execute("DELETE FROM customer_shares WHERE user_id = ?", (user_id,))
+            connection.executemany("INSERT INTO project_shares (project_id, user_id) VALUES (?, ?)", [(pid, user_id) for pid in project_ids])
+            connection.executemany("INSERT INTO customer_shares (customer_id, user_id) VALUES (?, ?)", [(cid, user_id) for cid in customer_ids])
+        return project_ids, customer_ids
 
     # ---------------------------------------------------------------- Kunden & Rechnungen
 
+    CUSTOMER_COLUMNS = ("SELECT customers.*, owners.username AS owner_name FROM customers "
+                        "JOIN users AS owners ON owners.id = customers.user_id ")
+
     def customers(self, user_id, include_archived=True):
-        query = "SELECT * FROM customers WHERE user_id = ?" + ("" if include_archived else " AND archived = 0")
+        query = self.CUSTOMER_COLUMNS + "WHERE " + self.CUSTOMER_ACCESS + ("" if include_archived else " AND customers.archived = 0")
         with self.connect() as connection:
-            rows = connection.execute(query + " ORDER BY archived, name COLLATE NOCASE", (user_id,)).fetchall()
-        return [dict(row) for row in rows]
+            rows = connection.execute(query + " ORDER BY customers.archived, customers.name COLLATE NOCASE, customers.id",
+                                      (user_id, user_id)).fetchall()
+        return [dict(row, shared=row["user_id"] != user_id) for row in rows]
 
     def customer(self, user_id, customer_id):
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM customers WHERE user_id = ? AND id = ?", (user_id, customer_id)).fetchone()
-        return dict(row) if row else None
+            row = connection.execute(self.CUSTOMER_COLUMNS + "WHERE " + self.CUSTOMER_ACCESS + " AND customers.id = ?",
+                                     (user_id, user_id, customer_id)).fetchone()
+        return dict(row, shared=row["user_id"] != user_id) if row else None
 
     def customer_by_name(self, user_id, name, create=False):
         name = " ".join((name or "").split())[:80]
         if not name:
             return None
         with self.connect() as connection:
-            row = connection.execute("SELECT id FROM customers WHERE user_id = ? AND name = ? COLLATE NOCASE", (user_id, name)).fetchone()
+            row = connection.execute("SELECT id FROM customers WHERE " + self.CUSTOMER_ACCESS + " AND name = ? COLLATE NOCASE "
+                                     "ORDER BY user_id != ? LIMIT 1", (user_id, user_id, name, user_id)).fetchone()
             if row:
                 return row["id"]
             if create:
@@ -355,8 +406,9 @@ class Store:
         reference = str(reference).strip()
         with self.connect() as connection:
             row = connection.execute(
-                "SELECT * FROM projects WHERE user_id = ? AND (CAST(id AS TEXT) = ? OR name = ? COLLATE NOCASE) ORDER BY archived LIMIT 1",
-                (user_id, reference, reference),
+                "SELECT * FROM projects WHERE " + self.PROJECT_ACCESS + " AND (CAST(id AS TEXT) = ? OR name = ? COLLATE NOCASE) "
+                "ORDER BY archived, user_id != ? LIMIT 1",
+                (user_id, user_id, reference, reference, user_id),
             ).fetchone()
         return dict(row) if row else None
 

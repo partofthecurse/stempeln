@@ -17,7 +17,7 @@
       <tbody>
       {% for p in projects %}{% set m = month.get(p.id) %}
       <tr class="{% if p.archived %}is-off{% endif %}">
-        <td>{{ project_chip(p.name, p.color, p.client) }}{% if p.rate_cents %} <small class="muted">{{ p.rate_cents | money }}{{ rate_suffix(p) }}</small>{% endif %}{% if p.archived %} <span class="tag">{{ _('archiviert') }}</span>{% endif %}</td>
+        <td>{{ project_chip(p.name, p.color, p.client) }}{% if p.rate_cents %} <small class="muted">{{ p.rate_cents | money }}{{ rate_suffix(p) }}</small>{% endif %}{% if p.archived %} <span class="tag">{{ _('archiviert') }}</span>{% endif %}{% if p.shared %} <span class="tag shared-tag">{{ _('von %(owner)s', owner=p.owner_name) }}</span>{% endif %}</td>
         <td class="num">{{ (m.seconds | duration) ~ ' h' if m else '' }}</td>
         <td class="num">{{ m.amount | money if m and m.amount else '' }}</td>
         <td class="num muted">{{ (totals.get(p.id, 0) | duration) ~ ' h' if totals.get(p.id) else '' }}</td>
@@ -53,7 +53,7 @@
     {% if edit %}
     <div class="inline-actions split-actions">
       <form method="post" action="{{ url_for('manage_project', project_id=edit.id, action='archive') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">{{ _('Reaktivieren') if edit.archived else _('Archivieren') }}</button></form>
-      <form method="post" action="{{ url_for('manage_project', project_id=edit.id, action='delete') }}" data-confirm="{{ _('Projekt löschen? Die erfassten Zeiten bleiben ohne Projekt erhalten.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">{{ _('Löschen') }}</button></form>
+      {% if not edit.shared or current_user.role == 'admin' %}<form method="post" action="{{ url_for('manage_project', project_id=edit.id, action='delete') }}" data-confirm="{{ _('Projekt löschen? Die erfassten Zeiten bleiben ohne Projekt erhalten.') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">{{ _('Löschen') }}</button></form>{% endif %}
     </div>
     <p class="hint">{{ _('Für NFC/API:') }} <code>"project": "{{ edit.name }}"</code> {{ _('oder') }} <code>"project": {{ edit.id }}</code></p>
     {% endif %}

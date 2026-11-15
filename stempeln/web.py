@@ -571,11 +571,11 @@ def create_app(test_config=None):
             try:
                 with store.connect() as connection:
                     if project_id:
-                        if not connection.execute(
-                                "UPDATE projects SET name = ?, client = ?, customer_id = ?, rate_cents = ?, color = ?, billing_unit = ?, "
-                                "day_hours = ?, day_rounding = ? WHERE id = ? AND user_id = ?",
-                                (*values, project_id, current_user.uid)).rowcount:
+                        if not store.project(current_user.uid, project_id):
                             abort(404)
+                        connection.execute(
+                            "UPDATE projects SET name = ?, client = ?, customer_id = ?, rate_cents = ?, color = ?, billing_unit = ?, "
+                            "day_hours = ?, day_rounding = ? WHERE id = ?", (*values, project_id))
                     else:
                         connection.execute("INSERT INTO projects (user_id, name, client, customer_id, rate_cents, color, billing_unit, "
                                            "day_hours, day_rounding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (current_user.uid, *values))
@@ -610,6 +610,8 @@ def create_app(test_config=None):
             if action == "archive":
                 connection.execute("UPDATE projects SET archived = 1 - archived WHERE id = ?", (project_id,))
                 flash((_("„%(name)s“ wieder aktiv.") if project["archived"] else _("„%(name)s“ archiviert.")) % {"name": project["name"]}, "success")
+            elif project["shared"] and current_user.role != "admin":
+                flash(_("Freigegebene Projekte kann nur %(owner)s löschen.", owner=project["owner_name"]), "error")
             else:
                 connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
                 flash(_("„%(name)s“ gelöscht. Die Einträge bleiben ohne Projekt erhalten.", name=project["name"]), "success")
@@ -949,8 +951,35 @@ def create_app(test_config=None):
                     flash(_("Dieser Benutzername ist bereits vergeben."), "error")
             return redirect(url_for("users"))
         with store.connect() as connection:
-            entries = [dict(row) for row in connection.execute("SELECT id, username, role, active, totp_secret IS NOT NULL AS totp_enabled FROM users ORDER BY username")]
-        return render_template("users.html", users=entries)
+            entries = [dict(row) for row in connection.execute(
+                "SELECT id, username, role, active, totp_secret IS NOT NULL AS totp_enabled, "
+                "(SELECT COUNT(*) FROM project_shares WHERE user_id = users.id) AS shared_projects, "
+                "(SELECT COUNT(*) FROM customer_shares WHERE user_id = users.id) AS shared_customers FROM users ORDER BY username")]
+            all_projects = [dict(row) for row in connection.execute(
+                "SELECT projects.id, projects.name, projects.archived, projects.user_id, projects.customer_id, users.username AS owner_name, "
+                "customers.name AS customer_name FROM projects JOIN users ON users.id = projects.user_id "
+                "LEFT JOIN customers ON customers.id = projects.customer_id ORDER BY users.username, projects.name COLLATE NOCASE")]
+            all_customers = [dict(row) for row in connection.execute(
+                "SELECT customers.id, customers.name, customers.archived, customers.user_id, users.username AS owner_name "
+                "FROM customers JOIN users ON users.id = customers.user_id ORDER BY users.username, customers.name COLLATE NOCASE")]
+        target = next((user for user in entries if user["id"] == request.args.get("freigaben", type=int)), None)
+        shared_projects, shared_customers = store.shares(target["id"]) if target else (set(), set())
+        return render_template("users.html", users=entries, target=target, all_projects=all_projects, all_customers=all_customers,
+                               shared_projects=shared_projects, shared_customers=shared_customers)
+
+    @app.post("/users/<int:user_id>/freigaben")
+    @admin_required
+    def user_shares(user_id):
+        with store.connect() as connection:
+            user = connection.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            abort(404)
+        project_ids = {int(value) for value in request.form.getlist("project_id") if value.isdigit()}
+        customer_ids = {int(value) for value in request.form.getlist("customer_id") if value.isdigit()}
+        projects, customers = store.set_shares(user_id, project_ids, customer_ids)
+        flash(_("Freigaben für %(user)s gespeichert: %(projects)s Projekt(e), %(customers)s Kunde(n).", user=user["username"],
+                projects=len(projects), customers=len(customers)), "success")
+        return redirect(url_for("users", freigaben=user_id) + "#freigaben")
 
     @app.post("/users/<int:user_id>/<action>")
     @admin_required

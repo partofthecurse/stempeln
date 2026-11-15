@@ -265,3 +265,11 @@ code{font-size:.9em;background:var(--soft);padding:1px 5px;border-radius:4px;ove
 details summary{list-style-position:inside}
 @media(max-width:700px){.invoice-table th:nth-child(3),.invoice-table td:nth-child(3){display:none}.invoice-items th:nth-child(5),.invoice-items td:nth-child(5){display:none}.recalc-form{flex-wrap:wrap}}
 .language-toggle{font-size:12px;font-weight:700;letter-spacing:.04em}
+.share-picker{max-width:320px;margin-bottom:18px}
+.share-picker label{display:grid;gap:6px;font-size:13px;font-weight:700}
+.share-picker select{width:100%;min-height:44px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--input)}
+.share-list{display:grid;gap:10px;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:0;min-width:0}
+.share-list legend{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);padding:0 6px;text-transform:uppercase}
+.share-list label.check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+.share-form .form-actions{margin-top:18px}
+.shared-tag{background:var(--ok-soft);color:var(--positive)}

@@ -498,9 +498,9 @@ def customers():
             with store().connect() as connection:
                 if customer_id:
                     columns = ", ".join(f"{key} = ?" for key in values)
-                    if not connection.execute(f"UPDATE customers SET {columns} WHERE id = ? AND user_id = ?",
-                                              (*values.values(), customer_id, current_user.uid)).rowcount:
+                    if not store().customer(current_user.uid, customer_id):
                         abort(404)
+                    connection.execute(f"UPDATE customers SET {columns} WHERE id = ?", (*values.values(), customer_id))
                     connection.execute("UPDATE projects SET client = ? WHERE customer_id = ?", (values["name"], customer_id))
                 else:
                     columns = ", ".join(values)
@@ -516,8 +516,10 @@ def customers():
         stats = {row["customer_id"]: dict(row) for row in connection.execute(
             "SELECT customer_id, COUNT(*) AS invoices, SUM(CASE WHEN status = 'open' AND type_code = '380' THEN gross_cents ELSE 0 END) AS open_cents "
             "FROM invoices WHERE user_id = ? GROUP BY customer_id", (current_user.uid,))}
-        project_counts = {row[0]: row[1] for row in connection.execute(
-            "SELECT customer_id, COUNT(*) FROM projects WHERE user_id = ? AND customer_id IS NOT NULL GROUP BY customer_id", (current_user.uid,))}
+        project_counts = {}
+        for project in store().projects(current_user.uid):
+            if project["customer_id"]:
+                project_counts[project["customer_id"]] = project_counts.get(project["customer_id"], 0) + 1
     edit = store().customer(current_user.uid, request.args.get("edit", type=int)) if request.args.get("edit") else None
     all_customers = store().customers(current_user.uid)
     suggestion = ""
@@ -539,6 +541,9 @@ def manage_customer(customer_id, action):
     with store().connect() as connection:
         if action == "archive":
             connection.execute("UPDATE customers SET archived = 1 - archived WHERE id = ?", (customer_id,))
+        elif customer["shared"] and current_user.role != "admin":
+            flash(_("Freigegebene Kunden kann nur %(owner)s löschen.", owner=customer["owner_name"]), "error")
+            return redirect(url_for("invoicing.customers", edit=customer_id))
         elif connection.execute("SELECT 1 FROM invoices WHERE customer_id = ?", (customer_id,)).fetchone():
             flash(_("Kunden mit Rechnungen können nur archiviert werden."), "error")
             return redirect(url_for("invoicing.customers", edit=customer_id))
