@@ -6,10 +6,21 @@
 
 Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, eine SQLite-Datei, keine Cloud. Benutzerkonten mit optionaler Zwei-Faktor-Authentifizierung, Hell-/Dunkelmodus und mehrere Wege, die Arbeitszeit **automatisch** zu erfassen.
 
+> [!WARNING]
+> **Nutzung auf eigenes Risiko.** Stempeln ist ein privates Hobbyprojekt ohne jede Gewährleistung. Für Datenverlust, fehlerhafte Zeiten oder Rechnungen und daraus entstehende Schäden wird keine Haftung übernommen. **Rechnungen musst du selbst prüfen** bzw. von deiner Steuerberatung prüfen lassen. Details unter [Haftungsausschluss](#haftungsausschluss).
+
 ## Funktionen
 
 - **Stempeluhr** mit Live-Timer, Tagessoll und voraussichtlichem Feierabend
-- **Projekte & Kunden** mit Farbe und optionalem Stundensatz: beim Einstempeln wählen, mit einem Klick wechseln, nachträglich zuordnen. Monatsauswertung mit Stunden und abrechenbarem Betrag, CSV pro Eintrag für die Rechnung.
+- **Projekte & Kunden** mit Farbe und optionalem Stunden- **oder Tagessatz**: beim Einstempeln wählen, mit einem Klick wechseln, nachträglich zuordnen. Monatsauswertung mit Stunden und abrechenbarem Betrag, CSV pro Eintrag.
+- **Rechnungen & E-Rechnung** (optional, unter Konto einschalten)
+  - Entwurf direkt aus den noch nicht abgerechneten Zeiten eines Kunden: eine Position je Projekt, je Tag oder je Eintrag; Stunden optional gerundet, Tagessätze anteilig, auf halbe oder ganze Tage
+  - Positionen frei bearbeiten oder ergänzen (Std., Tag, Stück, pauschal), Kopf-/Fußtext mit Platzhaltern, Leistungsnachweis als Anlage
+  - **ZUGFeRD/Factur-X** (PDF/A-3 mit eingebetteter CII-XML nach EN 16931) und **XRechnung 3.0** als XML für Behörden mit Leitweg-ID
+  - Regelbesteuerung mit mehreren Steuersätzen, **Kleinunternehmer (§ 19 UStG)**, **Reverse Charge** und Drittland je Kunde
+  - Fortlaufender Nummernkreis (z. B. `RE-{JJJJ}-{NNN}`, optional jährlich neu), Nummer erst beim Abschließen
+  - Abgeschlossene Rechnungen sind unveränderlich: Absender- und Kundendaten werden eingefroren, das PDF wird mit SHA-256 im Datenvolume archiviert (`/data/invoices`), abgerechnete Zeiten werden gesperrt
+  - Status offen/bezahlt/überfällig, Storno per Stornorechnung (gibt die Zeiten wieder frei)
 - **Für Angestellte oder freiberuflich**: Soll, Überstundensaldo, Resturlaub und Abwesenheiten lassen sich pro Konto abschalten. Dann zählt Stempeln nur Stunden je Projekt.
 - **Automatische Erfassung**
   - *Gerät im Heimnetz*: Stempeln pingt jede Minute deinen Arbeitslaptop (oder prüft einen TCP-Port). Ist er online, läuft die Zeit. Ist er länger als die Leerlaufzeit weg, endet der Eintrag zum letzten Kontakt.
@@ -96,5 +107,17 @@ Ein Tag `v*` baut das Multi-Arch-Image, veröffentlicht es auf `ghcr.io/partofth
 
 ## Hinweise
 
-- Schriften: DM Sans und Outfit, SIL Open Font License 1.1, siehe [NOTICE](NOTICE)
+- Schriften: DM Sans und Outfit, SIL Open Font License 1.1, siehe [NOTICE](NOTICE). Für PDFs liegen DM-Sans-TTF-Dateien unter `stempeln/pdf_fonts`.
+- Rechnungen: Die erzeugten Dateien wurden während der Entwicklung mit dem Mustang-Validator (veraPDF für PDF/A-3, Schematron-Regeln für EN 16931 und XRechnung 3.0) geprüft. Das ist keine Garantie für deine konkreten Rechnungen, siehe Haftungsausschluss. Das Datenvolume ist das Rechnungsarchiv und gehört in die Datensicherung (Aufbewahrungspflicht in der Regel 8 Jahre).
 - Mit KI-Unterstützung (Claude) entwickelt
+
+## Haftungsausschluss
+
+Stempeln wird so bereitgestellt, wie es ist („as is“), ohne ausdrückliche oder stillschweigende Gewährleistung, insbesondere nicht für Richtigkeit, Vollständigkeit, Verfügbarkeit oder Eignung für einen bestimmten Zweck. Wer Stempeln installiert oder betreibt, tut das **auf eigenes Risiko und in eigener Verantwortung**.
+
+- Der Autor haftet nicht für Schäden, die aus der Nutzung entstehen, etwa durch Datenverlust, fehlerhaft erfasste oder berechnete Arbeitszeiten, Sicherheitslücken oder falsche Rechnungen. Unberührt bleibt die Haftung für Vorsatz und grobe Fahrlässigkeit, soweit sie gesetzlich nicht ausgeschlossen werden kann.
+- **Rechnungen, Steuerberechnung und E-Rechnungsdateien müssen vor dem Versand selbst geprüft werden**, am besten durch eine Steuerberatung. Stempeln ist keine Buchhaltungssoftware, kein zertifiziertes Kassen- oder Archivsystem und keine Steuer- oder Rechtsberatung. Für die Einhaltung von Pflichtangaben, Steuerrecht, GoBD und Aufbewahrungsfristen bist du selbst verantwortlich.
+- Arbeitszeitauswertungen (z. B. Pausen nach ArbZG, Saldo) sind Hilfsmittel und ersetzen keine rechtliche Prüfung.
+- Für Datensicherung, Updates und den sicheren Betrieb (Netzwerk, Zugriffe, Reverse Proxy) bist du selbst verantwortlich.
+
+*English summary: Use at your own risk. This software comes without any warranty and the author accepts no liability. Always have invoices and tax figures checked yourself or by a tax advisor before sending them.*

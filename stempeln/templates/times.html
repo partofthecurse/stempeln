@@ -26,7 +26,7 @@
         <td>
           {% if r.holiday %}<span class="tag holiday">{{ r.holiday }}</span>{% endif %}
           {% if r.absence %}<span class="tag absence">{{ ABSENCE_LABELS[r.absence.kind] }}{% if r.absence.half %} ½{% endif %}</span>{% endif %}
-          {% for begin, finish, entry in r.segments %}<a class="span-chip pc-{{ entry.project_color or 'none' }} {% if edit and edit.id == entry.id %}selected{% endif %}" href="{{ url_for('times', monat=m, edit=entry.id, projekt=project_filter) }}#entry-form" title="{{ entry.project_name or 'Ohne Projekt' }} · {{ SOURCE_LABELS.get(entry.source, entry.source) }}{% if entry.note %}: {{ entry.note }}{% endif %}"><span class="dot"></span>{{ begin | clocktime }}–{{ 'jetzt' if entry.end_at is none else finish | clocktime }}{% if entry.project_name %} <small>{{ entry.project_name }}</small>{% endif %}{% if entry.note %} ✎{% endif %}</a>{% endfor %}
+          {% for begin, finish, entry in r.segments %}<a class="span-chip pc-{{ entry.project_color or 'none' }} {% if edit and edit.id == entry.id %}selected{% endif %}" href="{{ url_for('times', monat=m, edit=entry.id, projekt=project_filter) }}#entry-form" title="{{ entry.project_name or 'Ohne Projekt' }} · {{ SOURCE_LABELS.get(entry.source, entry.source) }}{% if entry.note %}: {{ entry.note }}{% endif %}"><span class="dot"></span>{{ begin | clocktime }}–{{ 'jetzt' if entry.end_at is none else finish | clocktime }}{% if entry.project_name %} <small>{{ entry.project_name }}</small>{% endif %}{% if entry.note %} ✎{% endif %}{% if entry.invoice_status in ('open', 'paid') %} 🔒{% endif %}</a>{% endfor %}
         </td>
         <td class="num muted">{{ (r.deducted + r.breaks) | duration if r.deducted or r.breaks else '' }}</td>
         <td class="num">{{ r.net | duration if r.net else '' }}</td>
@@ -43,6 +43,8 @@
   <section class="card sticky" id="entry-form">
     {% if edit %}
     <span class="section-label">EINTRAG BEARBEITEN · {{ SOURCE_LABELS.get(edit.source, edit.source) | upper }}</span><h2>{{ edit.start_at | clocktime }}{% if edit.end_at %} – {{ edit.end_at | clocktime }}{% endif %}</h2>
+    {% if edit.invoice_number %}<p class="notice {% if edit.invoice_status in ('open', 'paid') %}error{% endif %}">{% if edit.invoice_status in ('open', 'paid') %}🔒 Abgerechnet mit Rechnung {{ edit.invoice_number }} – gesperrt.{% else %}Gehört zu einem Rechnungsentwurf.{% endif %}{% if nav_invoicing %} <a href="{{ url_for('invoicing.invoice', invoice_id=edit.invoice_id) }}">Zur Rechnung</a>{% endif %}</p>
+    {% elif edit.invoice_id %}<p class="notice">Gehört zu einem Rechnungsentwurf.{% if nav_invoicing %} <a href="{{ url_for('invoicing.invoice', invoice_id=edit.invoice_id) }}">Zum Entwurf</a>{% endif %}</p>{% endif %}
     <form method="post" action="{{ url_for('update_entry', entry_id=edit.id) }}" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Datum (Beginn)<input type="date" name="day" value="{{ edit.start_day }}" required></label>

@@ -1,0 +1,147 @@
+{% extends 'base.html' %}
+{% block title %}{{ invoice.number or 'Entwurf' }}{% endblock %}
+{% block content %}
+{% set draft = invoice.status == 'draft' %}{% set storno = invoice.type_code == '381' %}{% set sign = -1 if storno else 1 %}
+{% set small = doc.tax_mode != 'standard' %}
+<div class="page-heading split">
+  <div>
+    <span class="eyebrow">{{ 'STORNORECHNUNG' if storno else 'RECHNUNG' }}</span>
+    <h1>{{ invoice.number or 'Entwurf' }}<span class="accent">.</span></h1>
+    <p>{{ doc.buyer.name or 'Ohne Kunde' }} · {{ doc.issue_date.strftime('%d.%m.%Y') }} · <span class="status-tag status-{{ invoice.status }}">{{ STATUS_LABELS[invoice.status] if not storno else 'Storno' }}</span>{% if invoice.paid_on %} am {{ invoice.paid_on[8:10] }}.{{ invoice.paid_on[5:7] }}.{{ invoice.paid_on[:4] }}{% endif %}</p>
+  </div>
+  <div class="heading-actions">
+    <a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">‹ Alle</a>
+    <a class="secondary-button" href="{{ url_for('invoicing.invoice_pdf_file', invoice_id=invoice.id, ansehen=1) }}" target="_blank" rel="noopener">{{ 'Vorschau' if draft else 'PDF ansehen' }}</a>
+    {% if not draft %}
+    <a class="primary-button" href="{{ url_for('invoicing.invoice_pdf_file', invoice_id=invoice.id) }}">E-Rechnung (PDF) ↓</a>
+    <a class="secondary-button" href="{{ url_for('invoicing.invoice_xml', invoice_id=invoice.id, variant='zugferd') }}" title="CII-XML nach EN 16931, identisch mit der im PDF eingebetteten Datei">XML ↓</a>
+    <a class="secondary-button" href="{{ url_for('invoicing.invoice_xml', invoice_id=invoice.id, variant='xrechnung') }}" title="{% if xrechnung_missing %}Fehlt: {{ xrechnung_missing | join(', ') }}{% else %}Für Behörden (Leitweg-ID){% endif %}">XRechnung ↓</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if problems %}<p class="notice error">Zum Abschließen fehlt noch: {{ problems | join(', ') }}. <a href="{{ url_for('invoicing.invoice_settings') }}">Einstellungen</a>{% if customer %} · <a href="{{ url_for('invoicing.customers', edit=customer.id) }}">Kunde bearbeiten</a>{% endif %}</p>{% endif %}
+{% for rel in related if rel.id != invoice.id %}<p class="notice">{% if rel.type_code == '381' %}Storniert durch <a href="{{ url_for('invoicing.invoice', invoice_id=rel.id) }}">{{ rel.number }}</a>.{% else %}Storniert die Rechnung <a href="{{ url_for('invoicing.invoice', invoice_id=rel.id) }}">{{ rel.number }}</a>.{% endif %}</p>{% endfor %}
+
+<div class="times-layout">
+  <div class="stack">
+    <section class="card" id="positionen">
+      <div class="section-heading"><span class="section-label">POSITIONEN</span>{% if draft and invoice.service_from %}
+        <form method="post" class="inline-form recalc-form" data-confirm="Alle Positionen aus den Zeiten neu berechnen? Manuell geänderte oder ergänzte Positionen gehen dabei verloren."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="recalc"><select name="mode" aria-label="Positionsart">{% for key, label in POSITION_MODES.items() %}<option value="{{ key }}" {% if settings.position_mode == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><button class="text-button" type="submit">Neu berechnen</button></form>{% endif %}</div>
+      <table class="month-table invoice-items">
+        <thead><tr><th>#</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Preis</th>{% if not small %}<th class="num">USt.</th>{% endif %}<th class="num">Gesamt</th>{% if draft %}<th></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for item in items %}
+        <tr class="{% if editing and editing.id == item.id %}is-today{% endif %}">
+          <td class="muted">{{ loop.index }}</td>
+          <td><strong>{{ item.description }}</strong>{% if item.detail %}<br><small class="muted">{{ item.detail }}</small>{% endif %}</td>
+          <td class="num">{{ fmt_quantity(item.quantity) }} {{ unit_label(item.unit, item.quantity) }}</td>
+          <td class="num">{{ item.price_cents | money }}</td>
+          {% if not small %}<td class="num muted">{{ fmt_quantity(item.vat_rate) }} %</td>{% endif %}
+          <td class="num">{{ (sign * item.line_cents) | money }}</td>
+          {% if draft %}<td class="row-actions">
+            <a class="text-link" href="{{ url_for('invoicing.invoice', invoice_id=invoice.id, position=item.id) }}#position-form">Bearbeiten</a>
+            <form method="post" class="inline-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="move"><input type="hidden" name="item_id" value="{{ item.id }}">{% if not loop.first %}<button class="text-button" name="direction" value="up" title="Nach oben" aria-label="Nach oben">↑</button>{% endif %}{% if not loop.last %}<button class="text-button" name="direction" value="down" title="Nach unten" aria-label="Nach unten">↓</button>{% endif %}</form>
+            <form method="post" class="inline-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete-item"><input type="hidden" name="item_id" value="{{ item.id }}"><button class="text-button danger" type="submit" title="Position löschen" aria-label="Position löschen">✕</button></form>
+          </td>{% endif %}
+        </tr>
+        {% else %}<tr><td colspan="7" class="muted">Noch keine Positionen.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      <div class="invoice-totals">
+        {% if not small %}<div><span>Summe netto</span><strong>{{ (sign * summary.net) | money }}</strong></div>
+        {% for group in summary.groups %}<div><span>USt. {{ fmt_quantity(group.rate) }} % auf {{ (sign * group.basis) | money }}</span><strong>{{ (sign * group.tax) | money }}</strong></div>{% endfor %}{% endif %}
+        <div class="grand"><span>{{ 'Gesamtbetrag' if small else 'Rechnungsbetrag' }}</span><strong>{{ (sign * summary.gross) | money }}</strong></div>
+        {% for group in summary.groups if group.reason %}<p class="hint">{{ group.reason }}</p>{% endfor %}
+      </div>
+    </section>
+
+    {% if draft %}
+    <section class="card">
+      <span class="section-label">RECHNUNGSDATEN</span>
+      <form method="post" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="header">
+        <div class="field-row three">
+          <label>Rechnungsdatum<input type="date" name="issue_date" value="{{ invoice.issue_date }}" required></label>
+          <label>Leistung von<input type="date" name="service_from" value="{{ invoice.service_from or '' }}"></label>
+          <label>Leistung bis<input type="date" name="service_to" value="{{ invoice.service_to or '' }}"></label>
+        </div>
+        <div class="field-row">
+          <label>Fällig am <span class="hint">leer = Rechnungsdatum + {{ customer.payment_days if customer and customer.payment_days is not none else settings.payment_days }} Tage</span><input type="date" name="due_date" value="{{ invoice.due_date or '' }}"></label>
+          <label>Käuferreferenz / Leitweg-ID <span class="hint">z. B. Bestellnummer; bei Behörden Pflicht</span><input name="buyer_reference" maxlength="100" value="{{ invoice.buyer_reference }}"></label>
+        </div>
+        <label>Kopftext<textarea name="intro" rows="2">{{ invoice.intro }}</textarea></label>
+        <label>Fußtext <span class="hint">Platzhalter: {faellig} {nummer} {betrag} {tage}</span><textarea name="footer" rows="2">{{ invoice.footer }}</textarea></label>
+        <label>Grußformel<input name="closing" maxlength="300" value="{{ invoice.closing }}"></label>
+        <label class="check"><input type="checkbox" name="timesheet" value="1" {% if invoice.timesheet %}checked{% endif %}> Leistungsnachweis mit allen Einträgen als Anlage anhängen</label>
+        <div class="form-actions"><button class="secondary-button" type="submit">Speichern</button></div>
+      </form>
+    </section>
+    {% endif %}
+
+    {% if entries %}
+    <section class="card">
+      <details><summary>{{ entries | length }} {{ 'Eintrag' if entries | length == 1 else 'Einträge' }} {{ 'reserviert' if draft else 'abgerechnet' }}</summary>
+        <table class="month-table entry-table"><tbody>{% for e in entries %}
+          <tr><td>{{ e.start_at | stamp }}</td><td class="num">{{ (e.end_at - e.start_at) | duration }} h</td><td>{{ e.project_name or '' }}</td><td class="muted">{{ e.note }}</td></tr>
+        {% endfor %}</tbody></table>
+      </details>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="stack sticky">
+    {% if draft %}
+    <section class="card" id="position-form">
+      <span class="section-label">{{ 'POSITION BEARBEITEN' if editing else 'POSITION HINZUFÜGEN' }}</span>
+      <form method="post" action="{{ url_for('invoicing.invoice', invoice_id=invoice.id) }}" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="{{ 'item' if editing else 'add' }}">{% if editing %}<input type="hidden" name="item_id" value="{{ editing.id }}">{% endif %}
+        <label>Beschreibung<input name="description" maxlength="200" value="{{ editing.description if editing else '' }}" required></label>
+        <label>Details <span class="hint">optional, zweite Zeile</span><textarea name="detail" rows="2">{{ editing.detail if editing else '' }}</textarea></label>
+        <div class="field-row">
+          <label>Menge<input name="quantity" inputmode="decimal" value="{{ fmt_quantity(editing.quantity) if editing else '1' }}" required></label>
+          <label>Einheit<select name="unit">{% for key, (short, long) in UNITS.items() %}<option value="{{ key }}" {% if (editing.unit if editing else 'LS') == key %}selected{% endif %}>{{ long }}</option>{% endfor %}</select></label>
+        </div>
+        <div class="field-row">
+          <label>Einzelpreis netto €<input name="price" inputmode="decimal" value="{{ ('%.2f' | format(editing.price_cents / 100)).replace('.', ',') if editing else '' }}" required></label>
+          {% if small %}<input type="hidden" name="vat_rate" value="0">{% else %}<label>USt. %<input name="vat_rate" inputmode="decimal" value="{{ fmt_quantity(editing.vat_rate) if editing else settings.default_vat_rate }}" required></label>{% endif %}
+        </div>
+        <div class="form-actions"><button class="primary-button" type="submit">{{ 'Speichern' if editing else 'Hinzufügen' }} <span>→</span></button>{% if editing %}<a class="subtle-link" href="{{ url_for('invoicing.invoice', invoice_id=invoice.id) }}#positionen">Abbrechen</a>{% endif %}</div>
+      </form>
+    </section>
+    <section class="card">
+      <span class="section-label">ABSCHLIESSEN</span>
+      <p>Vergibt die nächste Nummer, friert Absender- und Kundendaten ein und archiviert das PDF unveränderlich. Danach sind nur noch Zahlungsstatus und Storno möglich.</p>
+      <p class="hint">Bitte Rechnung vor dem Versand selbst prüfen (Vorschau) bzw. von der Steuerberatung prüfen lassen – Nutzung auf eigenes Risiko.</p>
+      <form method="post" data-confirm="Rechnung jetzt abschließen? Danach kann sie nicht mehr geändert werden."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="finalize"><button class="primary-button wide" type="submit" {% if problems or not items %}disabled{% endif %}>Abschließen & Nummer vergeben <span>→</span></button></form>
+      <form method="post" class="delete-form" data-confirm="Entwurf löschen? Die Zeiten werden wieder freigegeben."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete"><button class="text-button danger" type="submit">Entwurf löschen</button></form>
+    </section>
+    {% else %}
+    <section class="card">
+      <span class="section-label">EMPFÄNGER</span>
+      <p class="address">{{ doc.buyer.name }}{% if doc.buyer.contact %}<br>{{ doc.buyer.contact }}{% endif %}<br>{{ doc.buyer.street }}<br>{{ doc.buyer.zip }} {{ doc.buyer.city }}{% if doc.buyer.country and doc.buyer.country != 'DE' %}<br>{{ doc.buyer.country }}{% endif %}</p>
+      <dl class="facts">
+        {% if doc.service_from %}<dt>Leistungszeitraum</dt><dd>{{ doc.service_from.strftime('%d.%m.%Y') }} – {{ doc.service_to.strftime('%d.%m.%Y') }}</dd>{% endif %}
+        {% if doc.due_date %}<dt>Fällig am</dt><dd>{{ doc.due_date.strftime('%d.%m.%Y') }}</dd>{% endif %}
+        <dt>Steuer</dt><dd>{{ {'standard': 'Regelbesteuerung', 'small_business': 'Kleinunternehmer § 19', 'reverse_charge': 'Reverse Charge', 'non_eu': 'Nicht steuerbar (Drittland)'}[doc.tax_mode] }}</dd>
+        <dt>Archiv</dt><dd><code title="SHA-256">{{ invoice.pdf_sha256[:16] }}…</code></dd>
+      </dl>
+    </section>
+    {% if not storno and invoice.status in ('open', 'paid') %}
+    <section class="card">
+      <span class="section-label">ZAHLUNG</span>
+      <form method="post" class="form-stack"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="paid">
+        {% if invoice.status == 'open' %}<label>Bezahlt am<input type="date" name="paid_on" value="{{ today.isoformat() }}"></label><button class="primary-button" type="submit">Als bezahlt markieren <span>✓</span></button>
+        {% else %}<button class="secondary-button" type="submit">Wieder auf offen setzen</button>{% endif %}
+      </form>
+    </section>
+    <section class="card">
+      <span class="section-label">STORNO</span>
+      <p>Erstellt eine Stornorechnung mit eigener Nummer. Die abgerechneten Zeiten werden wieder frei und können neu abgerechnet werden.</p>
+      <form method="post" data-confirm="Rechnung {{ invoice.number }} wirklich stornieren?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="cancel"><button class="secondary-button danger-button" type="submit">Rechnung stornieren</button></form>
+    </section>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

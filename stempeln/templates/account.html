@@ -23,6 +23,14 @@
     </div>
   </form>
 </section>
+<section class="card">
+  <span class="section-label">FUNKTIONEN</span><h2>Rechnungen & E-Rechnung</h2>
+  <form method="post" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="invoicing">
+    <label class="check"><input type="checkbox" name="enabled" value="1" {% if invoicing %}checked{% endif %}> <span><strong>Rechnungen schreiben</strong><br><span class="hint">Erstellt aus erfassten Projektzeiten Rechnungen als ZUGFeRD-PDF (E-Rechnung nach EN 16931) und auf Wunsch als XRechnung-XML. Mit Kunden, Nummernkreis, Stunden- oder Tagessätzen, Storno und Zahlungsstatus.</span></span></label>
+    <div class="form-end">{% if invoicing %}<a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">Rechnungseinstellungen</a> {% endif %}<button class="primary-button" type="submit">Speichern <span>→</span></button></div>
+  </form>
+</section>
 <div class="settings-layout">
   <section class="card settings-block"><span class="section-label">ANMELDUNG</span><h2>Zwei-Faktor-Authentifizierung</h2>
     {% if current_user.totp_enabled %}<p>Dein Konto ist zusätzlich abgesichert.</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="disable"><label>Passwort<input type="password" name="password" autocomplete="current-password" required></label><label>Authenticator- oder Wiederherstellungscode<input name="code" autocomplete="one-time-code" required></label><button class="secondary-button" type="submit">2FA deaktivieren</button></form>

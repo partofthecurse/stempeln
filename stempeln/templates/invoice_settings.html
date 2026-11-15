@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Rechnungseinstellungen{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">RECHNUNGEN</span><h1>Einstellungen<span class="accent">.</span></h1><p>Absender, Steuer, Bank, Nummernkreis und Standardtexte</p></div>
+  <div class="heading-actions"><a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">‹ Rechnungen</a></div>
+</div>
+<form method="post" class="settings-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="settings-layout">
+    <section class="card">
+      <span class="section-label">ABSENDER</span><h2>Deine Angaben</h2>
+      <div class="form-stack">
+        <div class="field-row"><label>Name / Firma<input name="company" maxlength="120" value="{{ settings.company }}"></label><label>Ansprechpartner <span class="hint">für XRechnung</span><input name="contact_name" maxlength="120" value="{{ settings.contact_name }}"></label></div>
+        <label>Straße und Nr.<input name="street" maxlength="120" value="{{ settings.street }}"></label>
+        <div class="field-row three"><label>PLZ<input name="zip" maxlength="12" value="{{ settings.zip }}"></label><label>Ort<input name="city" maxlength="120" value="{{ settings.city }}"></label><label>Land<input name="country" maxlength="2" value="{{ settings.country }}"></label></div>
+        <div class="field-row"><label>E-Mail<input type="email" name="email" maxlength="120" value="{{ settings.email }}"></label><label>Telefon <span class="hint">für XRechnung</span><input name="phone" maxlength="60" value="{{ settings.phone }}"></label></div>
+        <label>Website <span class="hint">optional</span><input name="website" maxlength="120" value="{{ settings.website }}"></label>
+      </div>
+    </section>
+    <section class="card">
+      <span class="section-label">STEUER & BANK</span><h2>Pflichtangaben</h2>
+      <div class="form-stack">
+        <label>Umsatzsteuer<select name="vat_mode">{% for key, label in VAT_MODES.items() %}<option value="{{ key }}" {% if settings.vat_mode == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <div class="field-row three"><label>Standard-Steuersatz %<input name="default_vat_rate" inputmode="decimal" value="{{ settings.default_vat_rate | replace('.', ',') }}"></label><label>Steuernummer<input name="tax_number" maxlength="40" value="{{ settings.tax_number }}"></label><label>USt-IdNr.<input name="vat_id" maxlength="20" value="{{ settings.vat_id }}"></label></div>
+        <p class="hint">Steuernummer oder USt-IdNr. ist Pflicht (§ 14 UStG). Als Kleinunternehmer wird keine Umsatzsteuer ausgewiesen und der § 19-Hinweis automatisch gedruckt. Reverse Charge und Drittland stellst du je Kunde ein.</p>
+        <div class="field-row"><label>Kontoinhaber <span class="hint">leer = Name</span><input name="account_holder" maxlength="120" value="{{ settings.account_holder }}"></label><label>Bank<input name="bank_name" maxlength="120" value="{{ settings.bank_name }}"></label></div>
+        <div class="field-row"><label>IBAN<input name="iban" maxlength="42" value="{{ settings.iban }}"></label><label>BIC <span class="hint">optional</span><input name="bic" maxlength="11" value="{{ settings.bic }}"></label></div>
+      </div>
+    </section>
+    <section class="card">
+      <span class="section-label">NUMMERN & ZAHLUNG</span><h2>Nummernkreis</h2>
+      <div class="form-stack">
+        <div class="field-row"><label>Format <span class="hint">{JJJJ} {JJ} {MM} {NNN}</span><input name="number_format" maxlength="40" value="{{ settings.number_format }}"></label><label>Nächste Nummer<input name="next_number" inputmode="numeric" value="{{ settings.next_number }}"></label></div>
+        <p class="hint">Nächste Rechnung: <strong>{{ preview }}</strong>. Nummern werden lückenlos erst beim Abschließen vergeben; Entwürfe verbrauchen keine.</p>
+        <label class="check"><input type="checkbox" name="reset_yearly" value="1" {% if settings.reset_yearly %}checked{% endif %}> Zähler jedes Jahr bei 1 beginnen</label>
+        <label>Zahlungsziel in Tagen<input name="payment_days" inputmode="numeric" value="{{ settings.payment_days }}"></label>
+      </div>
+    </section>
+    <section class="card">
+      <span class="section-label">AUS ZEITEN</span><h2>Positionen</h2>
+      <div class="form-stack">
+        <label>Standard-Aufteilung<select name="position_mode">{% for key, label in POSITION_MODES.items() %}<option value="{{ key }}" {% if settings.position_mode == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label>Stunden runden <span class="hint">kaufmännisch je Position</span><select name="rounding_minutes">{% for key, label in ROUNDING_CHOICES.items() %}<option value="{{ key }}" {% if settings.rounding_minutes == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label class="check"><input type="checkbox" name="timesheet" value="1" {% if settings.timesheet %}checked{% endif %}> Leistungsnachweis (alle Einträge mit Datum, Zeit und Notiz) als Anlage</label>
+        <p class="hint">Stunden- oder Tagessatz, Tageslänge und Tagesrundung legst du je Projekt fest.</p>
+      </div>
+    </section>
+  </div>
+  <section class="card">
+    <span class="section-label">TEXTE</span><h2>Standardtexte</h2>
+    <div class="form-stack">
+      <label>Kopftext<textarea name="intro" rows="2" placeholder="{{ DEFAULT_INTRO }}">{{ settings.intro if settings.intro is not none else DEFAULT_INTRO }}</textarea></label>
+      <label>Fußtext <span class="hint">Platzhalter: {faellig} {nummer} {betrag} {tage}</span><textarea name="footer" rows="2" placeholder="{{ DEFAULT_FOOTER }}">{{ settings.footer if settings.footer is not none else DEFAULT_FOOTER }}</textarea></label>
+      <label>Grußformel<input name="closing" maxlength="300" value="{{ settings.closing }}"></label>
+      <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

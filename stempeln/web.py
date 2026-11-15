@@ -17,11 +17,12 @@ from flask_login import LoginManager, UserMixin, current_user, login_required, l
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import clock
+from . import billing, clock
+from .invoicing import bp as invoicing_bp
 from .security import (DUMMY_HASH, clear_failures, hasher, load_keys, new_api_token, password_valid, rate_limited,
                        record_failure, recovery_hash, token_hash)
 from .store import Store
-from .timecalc import (ABSENCE_LABELS, REGIONS, WEEKDAYS, amount_cents, balance, day_bounds, day_report, days_between,
+from .timecalc import (ABSENCE_LABELS, REGIONS, WEEKDAYS, balance, day_bounds, day_report, days_between,
                        fmt_duration, fmt_money, fmt_time, parse_local, project_totals, range_report, required_break_net,
                        target_seconds, to_local, today, vacation_used)
 
@@ -128,10 +129,14 @@ def create_app(test_config=None):
         SOURCE_LABELS=SOURCE_LABELS, REGIONS=REGIONS, MONTHS=MONTHS, PROJECT_COLORS=PROJECT_COLORS,
     )
 
+    app.jinja_env.globals.update(rate_suffix=billing.rate_suffix, BILLING_UNITS=billing.BILLING_UNITS, DAY_ROUNDING=billing.DAY_ROUNDING)
+    app.register_blueprint(invoicing_bp)
+
     @app.context_processor
     def navigation_context():
         if current_user.is_authenticated:
-            return {"nav_profile": store.profile(current_user.uid)}
+            return {"nav_profile": store.profile(current_user.uid),
+                    "nav_invoicing": store.invoice_settings(current_user.uid)["enabled"]}
         return {}
 
     @login_manager.user_loader
@@ -201,7 +206,7 @@ def create_app(test_config=None):
             project = by_id.get(project_id)
             rows.append({
                 "project": project, "seconds": seconds,
-                "amount": amount_cents(seconds, project["rate_cents"]) if project else 0,
+                "amount": billing.project_amount(seconds, project),
             })
         return rows
 
@@ -412,10 +417,21 @@ def create_app(test_config=None):
             return redirect(url_for("times", monat=day.strftime("%Y-%m")))
         return redirect(url_for("times", monat=request.form.get("day", "")[:7]))
 
+    def locked(entry):
+        if entry["invoice_status"] in ("open", "paid"):
+            flash(f"Dieser Eintrag ist mit Rechnung {entry['invoice_number']} abgerechnet und gesperrt. "
+                  "Zum Ändern die Rechnung stornieren.", "error")
+            return True
+        if entry["invoice_status"] == "draft":
+            flash("Hinweis: Der Eintrag gehört zu einem Rechnungsentwurf – dort ggf. „Neu berechnen“.", "success")
+        return False
+
     @app.post("/entries/<int:entry_id>")
     @login_required
     def update_entry(entry_id):
         entry = own_entry(entry_id)
+        if locked(entry):
+            return redirect(url_for("times", monat=to_local(entry["start_at"]).strftime("%Y-%m"), edit=entry_id))
         values = entry_from_form(exclude_id=entry_id, allow_open=entry["end_at"] is None)
         if not values:
             return redirect(url_for("times", monat=request.form.get("day", "")[:7], edit=entry_id))
@@ -433,6 +449,8 @@ def create_app(test_config=None):
     @login_required
     def delete_entry(entry_id):
         entry = own_entry(entry_id)
+        if locked(entry):
+            return redirect(url_for("times", monat=to_local(entry["start_at"]).strftime("%Y-%m"), edit=entry_id))
         with store.connect() as connection:
             connection.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
         flash("Eintrag gelöscht.", "success")
@@ -452,16 +470,20 @@ def create_app(test_config=None):
             project = store.project(current_user.uid, project_filter)
             suffix = "-" + re.sub(r"[^A-Za-z0-9_-]+", "-", project["name"]).strip("-") if project else ""
         if request.args.get("art") == "eintraege":
-            writer.writerow(["Datum", "Beginn", "Ende", "Dauer", "Stunden", "Projekt", "Kunde", "Stundensatz", "Betrag", "Notiz"])
+            projects_by_id = {p["id"]: p for p in store.projects(current_user.uid)}
+            writer.writerow(["Datum", "Beginn", "Ende", "Dauer", "Stunden", "Projekt", "Kunde", "Satz", "Einheit", "Betrag", "Rechnung", "Notiz"])
             for report in reports:
                 for begin, finish, entry in report["segments"]:
                     seconds = finish - begin
+                    project = projects_by_id.get(entry["project_id"])
                     rate = entry["project_rate"]
                     writer.writerow([
                         report["day"].strftime("%d.%m.%Y"), fmt_time(begin), fmt_time(finish), fmt_duration(seconds),
                         f"{seconds / 3600:.2f}".replace(".", ","), entry["project_name"] or "", entry["project_client"] or "",
                         f"{rate / 100:.2f}".replace(".", ",") if rate else "",
-                        f"{amount_cents(seconds, rate) / 100:.2f}".replace(".", ",") if rate else "", entry["note"],
+                        ("Tag" if entry["project_unit"] == "day" else "Stunde") if rate else "",
+                        f"{billing.project_amount(seconds, project) / 100:.2f}".replace(".", ",") if rate else "",
+                        entry["invoice_number"] or "", entry["note"],
                     ])
             filename = f"stempeln-eintraege-{first:%Y-%m}{suffix}.csv"
             return Response("\ufeff" + output.getvalue(), mimetype="text/csv",
@@ -492,19 +514,26 @@ def create_app(test_config=None):
             client = " ".join(request.form.get("client", "").split())[:80]
             rate = parse_money(request.form.get("rate"))
             color = request.form.get("color", "blue")
-            if not name or rate == -1 or color not in PROJECT_COLORS:
-                flash("Bitte einen Namen und ggf. einen gültigen Stundensatz angeben.", "error")
+            unit = request.form.get("billing_unit", "hour")
+            day_hours = billing.parse_quantity(request.form.get("day_hours") or "8")
+            day_rounding = request.form.get("day_rounding", "exact")
+            if (not name or rate == -1 or color not in PROJECT_COLORS or unit not in billing.BILLING_UNITS
+                    or day_hours is None or not 1 <= day_hours <= 24 or day_rounding not in billing.DAY_ROUNDING):
+                flash("Bitte einen Namen und ggf. einen gültigen Satz bzw. eine Tageslänge (1–24 h) angeben.", "error")
                 return redirect(url_for("projects", edit=project_id) if project_id else url_for("projects"))
+            customer_id = store.customer_by_name(current_user.uid, client, create=True)
+            values = (name, client, customer_id, rate, color, unit, str(day_hours), day_rounding)
             try:
                 with store.connect() as connection:
                     if project_id:
                         if not connection.execute(
-                                "UPDATE projects SET name = ?, client = ?, rate_cents = ?, color = ? WHERE id = ? AND user_id = ?",
-                                (name, client, rate, color, project_id, current_user.uid)).rowcount:
+                                "UPDATE projects SET name = ?, client = ?, customer_id = ?, rate_cents = ?, color = ?, billing_unit = ?, "
+                                "day_hours = ?, day_rounding = ? WHERE id = ? AND user_id = ?",
+                                (*values, project_id, current_user.uid)).rowcount:
                             abort(404)
                     else:
-                        connection.execute("INSERT INTO projects (user_id, name, client, rate_cents, color) VALUES (?, ?, ?, ?, ?)",
-                                           (current_user.uid, name, client, rate, color))
+                        connection.execute("INSERT INTO projects (user_id, name, client, customer_id, rate_cents, color, billing_unit, "
+                                           "day_hours, day_rounding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (current_user.uid, *values))
             except sqlite3.IntegrityError:
                 flash("Ein Projekt mit diesem Namen gibt es schon.", "error")
                 return redirect(url_for("projects"))
@@ -521,7 +550,7 @@ def create_app(test_config=None):
                 (current_user.uid,))}
         edit = store.project(current_user.uid, request.args.get("edit", type=int)) if request.args.get("edit") else None
         return render_template(
-            "projects.html", projects=all_projects, month=month_by_id, totals=totals, first=first, edit=edit,
+            "projects.html", projects=all_projects, customers=store.customers(current_user.uid, include_archived=False), month=month_by_id, totals=totals, first=first, edit=edit,
             previous=(first - timedelta(days=1)).strftime("%Y-%m"), following=following.strftime("%Y-%m"),
             month_seconds=sum(row["seconds"] for row in month), month_amount=sum(row["amount"] for row in month),
         )
@@ -787,6 +816,12 @@ def create_app(test_config=None):
                                          break_rule=1 if request.form.get("break_rule") else 0, vacation_days=vacation,
                                          balance_start=start_text or None, balance_offset=offset)
                     flash("Arbeitszeitmodell gespeichert.", "success")
+            elif action == "invoicing":
+                store.update_invoice_settings(current_user.uid, enabled=1 if request.form.get("enabled") else 0)
+                flash("Rechnungen aktiviert – trag zuerst deine Absenderdaten ein." if request.form.get("enabled")
+                      else "Rechnungen ausgeblendet. Vorhandene Rechnungen bleiben gespeichert.", "success")
+                if request.form.get("enabled"):
+                    return redirect(url_for("invoicing.invoice_settings"))
             elif action == "password":
                 keys = subjects(current_user.username)
                 new_password = request.form.get("new_password", "")
@@ -841,6 +876,7 @@ def create_app(test_config=None):
             qr = base64.b64encode(output.getvalue()).decode()
         profile = store.profile(current_user.uid)
         return render_template("account.html", qr=qr, secret=secret, profile=profile,
+                               invoicing=store.invoice_settings(current_user.uid)["enabled"],
                                weekly=fmt_duration(profile["weekly_minutes"] * 60),
                                offset=fmt_duration(profile["balance_offset"] * 60))
 

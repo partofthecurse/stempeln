@@ -44,6 +44,11 @@ if (timer) {
   });
 }
 
+document.querySelectorAll('select[data-toggle-day]').forEach(select => {
+  const update = () => select.form.querySelectorAll('.day-only').forEach(row => { row.hidden = select.value !== 'day'; });
+  select.addEventListener('change', update);
+});
+
 document.querySelectorAll('select[data-autosubmit]').forEach(select => {
   select.addEventListener('change', () => select.form.submit());
 });

@@ -3,6 +3,7 @@ cryptography>=45,<47
 Flask>=3.1,<4
 Flask-Login==0.6.3
 Flask-WTF==1.2.2
+fpdf2==2.9.0
 gunicorn==23.0.0
 holidays>=0.60,<1
 pyotp==2.9.0

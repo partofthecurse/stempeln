@@ -1,6 +1,5 @@
 import re
 import tempfile
-import time
 import unittest
 
 import pyotp
@@ -163,7 +162,7 @@ class ProjectTests(unittest.TestCase):
         self.client.post("/entries", data={"day": "2026-11-16", "start": "09:00", "end": "11:30", "project_id": str(self.web), "note": "Layout"})
         self.client.post("/entries", data={"day": "2026-11-16", "start": "13:00", "end": "14:00", "project_id": str(self.maintenance)})
         csv = self.client.get("/zeiten.csv?monat=2026-11&art=eintraege").data.decode("utf-8-sig")
-        self.assertIn("16.11.2026;09:00;11:30;2:30;2,50;Website Relaunch;ACME;90,00;225,00;Layout", csv)
+        self.assertIn("16.11.2026;09:00;11:30;2:30;2,50;Website Relaunch;ACME;90,00;Stunde;225,00;;Layout", csv)
         filtered = self.client.get(f"/zeiten.csv?monat=2026-11&art=eintraege&projekt={self.maintenance}").data.decode("utf-8-sig")
         self.assertNotIn("Website", filtered)
         self.assertIn("Wartung", filtered)

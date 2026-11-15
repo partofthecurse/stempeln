@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% block title %}Kunden{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">KUNDEN</span><h1>Kunden<span class="accent">.</span></h1><p>Rechnungsempfänger mit Anschrift, Steuerfall und Zahlungsziel</p></div>
+  <div class="heading-actions">{% if invoicing %}<a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">‹ Rechnungen</a>{% endif %}<a class="secondary-button" href="{{ url_for('projects') }}">Projekte</a></div>
+</div>
+<div class="times-layout">
+  <section class="card">
+    <table class="month-table">
+      <thead><tr><th>Kunde</th><th>Ort</th><th class="num">Projekte</th><th class="num">Offen</th><th></th></tr></thead>
+      <tbody>
+      {% for c in customers %}{% set st = stats.get(c.id, {}) %}
+      <tr class="{% if c.archived %}is-off{% endif %}">
+        <td><strong>{{ c.name }}</strong>{% if c.number %} <small class="muted">{{ c.number }}</small>{% endif %}{% if c.tax_mode != 'domestic' %} <span class="tag">{{ 'Reverse Charge' if c.tax_mode == 'reverse_charge' else 'Drittland' }}</span>{% endif %}{% if c.leitweg_id %} <span class="tag">Leitweg-ID</span>{% endif %}{% if c.archived %} <span class="tag">archiviert</span>{% endif %}
+          {% if not c.street or not c.city %}<br><small class="negative">Anschrift fehlt</small>{% endif %}</td>
+        <td class="muted">{{ c.zip }} {{ c.city }}</td>
+        <td class="num">{{ project_counts.get(c.id, '') }}</td>
+        <td class="num">{{ st.open_cents | money if st.open_cents else '' }}</td>
+        <td class="row-actions"><a class="text-link" href="{{ url_for('invoicing.customers', edit=c.id) }}#customer-form">Bearbeiten</a></td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="muted">Noch keine Kunden. Kunden entstehen auch automatisch, wenn du bei einem Projekt einen Kundennamen einträgst.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="card sticky" id="customer-form">
+    <span class="section-label">{{ 'KUNDE BEARBEITEN' if edit else 'NEUER KUNDE' }}</span><h2>{{ edit.name if edit else 'Kunde anlegen' }}</h2>
+    <form method="post" action="{{ url_for('invoicing.customers') }}" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if edit %}<input type="hidden" name="customer_id" value="{{ edit.id }}">{% endif %}
+      <div class="field-row"><label>Name / Firma<input name="name" maxlength="120" value="{{ edit.name if edit else '' }}" required></label><label>Kundennr. <span class="hint">optional</span><input name="number" maxlength="40" value="{{ edit.number if edit else suggestion }}"></label></div>
+      <label>z. Hd. / Abteilung <span class="hint">optional</span><input name="contact" maxlength="120" value="{{ edit.contact if edit else '' }}"></label>
+      <label>Straße und Nr.<input name="street" maxlength="120" value="{{ edit.street if edit else '' }}"></label>
+      <div class="field-row zip-row"><label>PLZ<input name="zip" maxlength="12" value="{{ edit.zip if edit else '' }}"></label><label>Ort<input name="city" maxlength="120" value="{{ edit.city if edit else '' }}"></label></div>
+      <div class="field-row"><label>Land <span class="hint">ISO, z. B. DE, AT</span><input name="country" maxlength="2" value="{{ edit.country if edit else 'DE' }}"></label><label>Zahlungsziel <span class="hint">Tage, leer = Standard</span><input name="payment_days" inputmode="numeric" value="{{ edit.payment_days if edit and edit.payment_days is not none else '' }}"></label></div>
+      <label>E-Mail für Rechnungen <span class="hint">für XRechnung Pflicht</span><input type="email" name="email" maxlength="120" value="{{ edit.email if edit else '' }}"></label>
+      <label>Steuerfall<select name="tax_mode">{% for key, label in CUSTOMER_TAX_MODES.items() %}<option value="{{ key }}" {% if (edit.tax_mode if edit else 'domestic') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <div class="field-row"><label>USt-IdNr. <span class="hint">bei Reverse Charge Pflicht</span><input name="vat_id" maxlength="20" value="{{ edit.vat_id if edit else '' }}"></label><label>Leitweg-ID <span class="hint">nur Behörden</span><input name="leitweg_id" maxlength="60" value="{{ edit.leitweg_id if edit else '' }}"></label></div>
+      <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button>{% if edit %}<a class="subtle-link" href="{{ url_for('invoicing.customers') }}">Abbrechen</a>{% endif %}</div>
+    </form>
+    {% if edit %}
+    <div class="inline-actions split-actions">
+      <form method="post" action="{{ url_for('invoicing.manage_customer', customer_id=edit.id, action='archive') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit">{{ 'Reaktivieren' if edit.archived else 'Archivieren' }}</button></form>
+      <form method="post" action="{{ url_for('invoicing.manage_customer', customer_id=edit.id, action='delete') }}" data-confirm="Kunden löschen? Projekte bleiben ohne Kunde erhalten."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">Löschen</button></form>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

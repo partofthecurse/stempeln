@@ -69,6 +69,100 @@ CREATE TABLE IF NOT EXISTS projects (
     archived INTEGER NOT NULL DEFAULT 0,
     UNIQUE (user_id, name COLLATE NOCASE)
 );
+CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    number TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    contact TEXT NOT NULL DEFAULT '',
+    street TEXT NOT NULL DEFAULT '',
+    zip TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT 'DE',
+    email TEXT NOT NULL DEFAULT '',
+    vat_id TEXT NOT NULL DEFAULT '',
+    leitweg_id TEXT NOT NULL DEFAULT '',
+    tax_mode TEXT NOT NULL DEFAULT 'domestic' CHECK (tax_mode IN ('domestic', 'reverse_charge', 'non_eu')),
+    payment_days INTEGER,
+    archived INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (user_id, name COLLATE NOCASE)
+);
+CREATE TABLE IF NOT EXISTS invoice_settings (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    company TEXT NOT NULL DEFAULT '',
+    contact_name TEXT NOT NULL DEFAULT '',
+    street TEXT NOT NULL DEFAULT '',
+    zip TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT 'DE',
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    website TEXT NOT NULL DEFAULT '',
+    tax_number TEXT NOT NULL DEFAULT '',
+    vat_id TEXT NOT NULL DEFAULT '',
+    vat_mode TEXT NOT NULL DEFAULT 'standard' CHECK (vat_mode IN ('standard', 'small_business')),
+    default_vat_rate TEXT NOT NULL DEFAULT '19',
+    bank_name TEXT NOT NULL DEFAULT '',
+    iban TEXT NOT NULL DEFAULT '',
+    bic TEXT NOT NULL DEFAULT '',
+    account_holder TEXT NOT NULL DEFAULT '',
+    number_format TEXT NOT NULL DEFAULT 'RE-{JJJJ}-{NNN}',
+    next_number INTEGER NOT NULL DEFAULT 1,
+    number_year INTEGER,
+    reset_yearly INTEGER NOT NULL DEFAULT 1,
+    payment_days INTEGER NOT NULL DEFAULT 14,
+    position_mode TEXT NOT NULL DEFAULT 'project',
+    rounding_minutes INTEGER NOT NULL DEFAULT 0,
+    timesheet INTEGER NOT NULL DEFAULT 1,
+    intro TEXT,
+    footer TEXT,
+    closing TEXT NOT NULL DEFAULT 'Mit freundlichen Grüßen'
+);
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    customer_id INTEGER REFERENCES customers(id),
+    number TEXT,
+    type_code TEXT NOT NULL DEFAULT '380' CHECK (type_code IN ('380', '381')),
+    status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'open', 'paid', 'cancelled')),
+    corrects_id INTEGER REFERENCES invoices(id),
+    issue_date TEXT NOT NULL,
+    service_from TEXT,
+    service_to TEXT,
+    due_date TEXT,
+    buyer_reference TEXT NOT NULL DEFAULT '',
+    intro TEXT NOT NULL DEFAULT '',
+    footer TEXT NOT NULL DEFAULT '',
+    closing TEXT NOT NULL DEFAULT '',
+    timesheet INTEGER NOT NULL DEFAULT 1,
+    tax_mode TEXT,
+    seller_json TEXT,
+    buyer_json TEXT,
+    net_cents INTEGER NOT NULL DEFAULT 0,
+    tax_cents INTEGER NOT NULL DEFAULT 0,
+    gross_cents INTEGER NOT NULL DEFAULT 0,
+    pdf_file TEXT,
+    pdf_sha256 TEXT,
+    created_at INTEGER NOT NULL,
+    finalized_at INTEGER,
+    paid_on TEXT,
+    UNIQUE (user_id, number)
+);
+CREATE INDEX IF NOT EXISTS invoices_user ON invoices(user_id, issue_date);
+CREATE TABLE IF NOT EXISTS invoice_items (
+    id INTEGER PRIMARY KEY,
+    invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    quantity TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT 'HUR',
+    price_cents INTEGER NOT NULL DEFAULT 0,
+    vat_rate TEXT NOT NULL DEFAULT '19',
+    line_cents INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS invoice_items_invoice ON invoice_items(invoice_id, position);
 CREATE TABLE IF NOT EXISTS api_tokens (
     id INTEGER PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -101,6 +195,21 @@ class Store:
             connection.execute("ALTER TABLE profiles ADD COLUMN track_balance INTEGER NOT NULL DEFAULT 1")
         if "default_project_id" not in profile_columns:
             connection.execute("ALTER TABLE profiles ADD COLUMN default_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        project_columns = columns("projects")
+        if "customer_id" not in project_columns:
+            connection.execute("ALTER TABLE projects ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL")
+            # Bisherige Freitext-Kunden werden zu echten Kunden
+            for row in connection.execute("SELECT DISTINCT user_id, client FROM projects WHERE client != ''").fetchall():
+                connection.execute("INSERT OR IGNORE INTO customers (user_id, name) VALUES (?, ?)", (row["user_id"], row["client"]))
+            connection.execute("UPDATE projects SET customer_id = (SELECT id FROM customers WHERE customers.user_id = projects.user_id "
+                               "AND customers.name = projects.client COLLATE NOCASE) WHERE client != ''")
+        if "billing_unit" not in project_columns:
+            connection.execute("ALTER TABLE projects ADD COLUMN billing_unit TEXT NOT NULL DEFAULT 'hour'")
+            connection.execute("ALTER TABLE projects ADD COLUMN day_hours TEXT NOT NULL DEFAULT '8'")
+            connection.execute("ALTER TABLE projects ADD COLUMN day_rounding TEXT NOT NULL DEFAULT 'exact'")
+        if "invoice_id" not in columns("entries"):
+            connection.execute("ALTER TABLE entries ADD COLUMN invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL")
+        connection.execute("CREATE INDEX IF NOT EXISTS entries_invoice ON entries(invoice_id)")
 
     @contextmanager
     def connect(self):
@@ -127,9 +236,12 @@ class Store:
         with self.connect() as connection:
             connection.execute(f"UPDATE profiles SET {columns} WHERE user_id = ?", (*values.values(), user_id))
 
-    ENTRY_COLUMNS = ("SELECT entries.*, projects.name AS project_name, projects.client AS project_client, "
-                     "projects.color AS project_color, projects.rate_cents AS project_rate "
-                     "FROM entries LEFT JOIN projects ON projects.id = entries.project_id ")
+    ENTRY_COLUMNS = ("SELECT entries.*, projects.name AS project_name, COALESCE(customers.name, projects.client) AS project_client, "
+                     "projects.color AS project_color, projects.rate_cents AS project_rate, projects.billing_unit AS project_unit, "
+                     "invoices.number AS invoice_number, invoices.status AS invoice_status "
+                     "FROM entries LEFT JOIN projects ON projects.id = entries.project_id "
+                     "LEFT JOIN customers ON customers.id = projects.customer_id "
+                     "LEFT JOIN invoices ON invoices.id = entries.invoice_id ")
 
     def open_entry(self, user_id):
         with self.connect() as connection:
@@ -153,16 +265,82 @@ class Store:
             rows = connection.execute(query + " ORDER BY start_at", parameters).fetchall()
         return [dict(row) for row in rows]
 
+    PROJECT_COLUMNS = ("SELECT projects.*, COALESCE(customers.name, projects.client) AS client_name "
+                       "FROM projects LEFT JOIN customers ON customers.id = projects.customer_id ")
+
     def projects(self, user_id, include_archived=True):
-        query = "SELECT * FROM projects WHERE user_id = ?" + ("" if include_archived else " AND archived = 0")
+        query = self.PROJECT_COLUMNS + "WHERE projects.user_id = ?" + ("" if include_archived else " AND projects.archived = 0")
         with self.connect() as connection:
-            rows = connection.execute(query + " ORDER BY archived, name COLLATE NOCASE", (user_id,)).fetchall()
+            rows = connection.execute(query + " ORDER BY projects.archived, projects.name COLLATE NOCASE", (user_id,)).fetchall()
         return [dict(row) for row in rows]
 
     def project(self, user_id, project_id):
         with self.connect() as connection:
-            row = connection.execute("SELECT * FROM projects WHERE user_id = ? AND id = ?", (user_id, project_id)).fetchone()
+            row = connection.execute(self.PROJECT_COLUMNS + "WHERE projects.user_id = ? AND projects.id = ?", (user_id, project_id)).fetchone()
         return dict(row) if row else None
+
+    # ---------------------------------------------------------------- Kunden & Rechnungen
+
+    def customers(self, user_id, include_archived=True):
+        query = "SELECT * FROM customers WHERE user_id = ?" + ("" if include_archived else " AND archived = 0")
+        with self.connect() as connection:
+            rows = connection.execute(query + " ORDER BY archived, name COLLATE NOCASE", (user_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def customer(self, user_id, customer_id):
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM customers WHERE user_id = ? AND id = ?", (user_id, customer_id)).fetchone()
+        return dict(row) if row else None
+
+    def customer_by_name(self, user_id, name, create=False):
+        name = " ".join((name or "").split())[:80]
+        if not name:
+            return None
+        with self.connect() as connection:
+            row = connection.execute("SELECT id FROM customers WHERE user_id = ? AND name = ? COLLATE NOCASE", (user_id, name)).fetchone()
+            if row:
+                return row["id"]
+            if create:
+                return connection.execute("INSERT INTO customers (user_id, name) VALUES (?, ?)", (user_id, name)).lastrowid
+        return None
+
+    def invoice_settings(self, user_id):
+        with self.connect() as connection:
+            connection.execute("INSERT OR IGNORE INTO invoice_settings (user_id) VALUES (?)", (user_id,))
+            return dict(connection.execute("SELECT * FROM invoice_settings WHERE user_id = ?", (user_id,)).fetchone())
+
+    def update_invoice_settings(self, user_id, **values):
+        self.invoice_settings(user_id)
+        columns = ", ".join(f"{key} = ?" for key in values)
+        with self.connect() as connection:
+            connection.execute(f"UPDATE invoice_settings SET {columns} WHERE user_id = ?", (*values.values(), user_id))
+
+    def invoice(self, user_id, invoice_id):
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM invoices WHERE user_id = ? AND id = ?", (user_id, invoice_id)).fetchone()
+        return dict(row) if row else None
+
+    def invoice_items(self, invoice_id):
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY position, id", (invoice_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def invoice_entries(self, invoice_id):
+        with self.connect() as connection:
+            rows = connection.execute(self.ENTRY_COLUMNS + "WHERE entries.invoice_id = ? ORDER BY start_at", (invoice_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def unbilled_entries(self, user_id, customer_id, start, end, connection=None):
+        """Abgeschlossene, noch nicht abgerechnete Einträge der Projekte eines Kunden im Zeitraum.
+        Mit connection läuft die Abfrage in der laufenden Transaktion des Aufrufers."""
+        if connection is None:
+            with self.connect() as own:
+                return self.unbilled_entries(user_id, customer_id, start, end, own)
+        rows = connection.execute(
+            self.ENTRY_COLUMNS + "WHERE entries.user_id = ? AND projects.customer_id = ? AND entries.end_at IS NOT NULL "
+            "AND entries.invoice_id IS NULL AND entries.start_at >= ? AND entries.start_at < ? ORDER BY entries.start_at",
+            (user_id, customer_id, start, end)).fetchall()
+        return [dict(row) for row in rows]
 
     def find_project(self, user_id, reference):
         """Projekt per ID oder Name (ohne Groß-/Kleinschreibung)."""

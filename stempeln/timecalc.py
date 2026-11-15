@@ -179,8 +179,9 @@ def project_totals(reports):
 
 
 def fmt_money(cents):
-    euros, rest = divmod(int(round(cents)), 100)
-    return f"{euros:,}".replace(",", ".") + f",{rest:02d} €"
+    cents = int(round(cents))
+    euros, rest = divmod(abs(cents), 100)
+    return ("-" if cents < 0 else "") + f"{euros:,}".replace(",", ".") + f",{rest:02d} €"
 
 
 def amount_cents(seconds, rate_cents):

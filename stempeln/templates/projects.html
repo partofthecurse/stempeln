@@ -17,7 +17,7 @@
       <tbody>
       {% for p in projects %}{% set m = month.get(p.id) %}
       <tr class="{% if p.archived %}is-off{% endif %}">
-        <td>{{ project_chip(p.name, p.color, p.client) }}{% if p.rate_cents %} <small class="muted">{{ p.rate_cents | money }}/h</small>{% endif %}{% if p.archived %} <span class="tag">archiviert</span>{% endif %}</td>
+        <td>{{ project_chip(p.name, p.color, p.client) }}{% if p.rate_cents %} <small class="muted">{{ p.rate_cents | money }}{{ rate_suffix(p) }}</small>{% endif %}{% if p.archived %} <span class="tag">archiviert</span>{% endif %}</td>
         <td class="num">{{ (m.seconds | duration) ~ ' h' if m else '' }}</td>
         <td class="num">{{ m.amount | money if m and m.amount else '' }}</td>
         <td class="num muted">{{ (totals.get(p.id, 0) | duration) ~ ' h' if totals.get(p.id) else '' }}</td>
@@ -37,8 +37,16 @@
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% if edit %}<input type="hidden" name="project_id" value="{{ edit.id }}">{% endif %}
       <label>Name<input name="name" maxlength="80" value="{{ edit.name if edit else '' }}" required></label>
-      <label>Kunde <span class="hint">optional</span><input name="client" maxlength="80" value="{{ edit.client if edit else '' }}"></label>
-      <label>Stundensatz in € <span class="hint">optional, netto</span><input name="rate" inputmode="decimal" placeholder="z. B. 85" value="{{ ('%.2f' | format(edit.rate_cents / 100)).replace('.', ',') if edit and edit.rate_cents else '' }}"></label>
+      <label>Kunde <span class="hint">optional · vorhandenen wählen oder neuen Namen eingeben</span><input name="client" maxlength="80" list="customer-list" autocomplete="off" value="{{ edit.client_name or '' if edit else '' }}"></label>
+      <datalist id="customer-list">{% for c in customers %}<option value="{{ c.name }}">{% endfor %}</datalist>
+      <div class="field-row">
+        <label>Abrechnung<select name="billing_unit" data-toggle-day>{% for key, label in BILLING_UNITS.items() %}<option value="{{ key }}" {% if (edit.billing_unit if edit else 'hour') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        <label>Satz in € <span class="hint">netto, optional</span><input name="rate" inputmode="decimal" placeholder="z. B. 85 bzw. 680" value="{{ ('%.2f' | format(edit.rate_cents / 100)).replace('.', ',') if edit and edit.rate_cents else '' }}"></label>
+      </div>
+      <div class="field-row day-only" {% if not edit or edit.billing_unit != 'day' %}hidden{% endif %}>
+        <label>Stunden pro Tag<input name="day_hours" inputmode="decimal" value="{{ (edit.day_hours if edit else '8') | replace('.', ',') }}"></label>
+        <label>Tage zählen<select name="day_rounding">{% for key, label in DAY_ROUNDING.items() %}<option value="{{ key }}" {% if (edit.day_rounding if edit else 'exact') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      </div>
       <fieldset class="color-picker"><legend>Farbe</legend>{% for c in PROJECT_COLORS %}<label><input type="radio" name="color" value="{{ c }}" {% if (edit.color if edit else 'blue') == c %}checked{% endif %}><span class="pc-{{ c }}" title="{{ c }}"></span></label>{% endfor %}</fieldset>
       <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button>{% if edit %}<a class="subtle-link" href="{{ url_for('projects') }}">Abbrechen</a>{% endif %}</div>
     </form>
