@@ -1,0 +1,4 @@
+services:
+  stempel:
+    build: .
+    image: stempel:local

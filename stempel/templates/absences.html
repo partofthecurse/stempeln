@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}Abwesenheit{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">URLAUB & CO.</span><h1>Abwesenheit {{ year }}<span class="accent">.</span></h1><p>Urlaub {{ '%g' | format(used) }} von {{ '%g' | format(profile.vacation_days) }} Tagen genommen · Rest {{ '%g' | format(profile.vacation_days - used) }} · Krank {{ '%g' | format(sick) }} Tage</p></div>
+  <div class="heading-actions"><a class="icon-button" href="{{ url_for('absences', jahr=year - 1) }}" aria-label="Vorjahr">‹</a><a class="icon-button" href="{{ url_for('absences', jahr=year + 1) }}" aria-label="Folgejahr">›</a></div>
+</div>
+<div class="settings-layout">
+  <section class="card"><span class="section-label">EINTRÄGE</span><h2>Zeiträume</h2>
+    {% for group in groups %}
+    <div class="user-row absence-row"><div><strong>{{ group.from.strftime('%d.%m.') }}{% if group.to != group.from %} – {{ group.to.strftime('%d.%m.') }}{% endif %}</strong><div class="user-details">{{ ABSENCE_LABELS[group.kind] }} · {{ '%g' | format(group.days) }} Arbeitstag(e){% if group.half %} · halber Tag{% endif %}</div></div>
+      <form method="post" action="{{ url_for('delete_absence') }}" data-confirm="Diese Abwesenheit entfernen?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="from" value="{{ group.from.isoformat() }}"><input type="hidden" name="to" value="{{ group.to.isoformat() }}"><button class="text-button" type="submit">Entfernen</button></form></div>
+    {% else %}<p class="muted">Noch nichts eingetragen.</p>{% endfor %}
+  </section>
+  <section class="card"><span class="section-label">NEU</span><h2>Abwesenheit eintragen</h2>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="field-row"><label>Von<input type="date" name="from" value="{{ today.isoformat() }}" required></label><label>Bis<input type="date" name="to"></label></div>
+      <label>Art<select name="kind">{% for key, label in ABSENCE_LABELS.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></label>
+      <label class="check"><input type="checkbox" name="half" value="1"> Nur ein halber Tag</label>
+      <button class="primary-button" type="submit">Eintragen <span>→</span></button>
+    </form>
+    <p class="hint">Wochenenden, freie Wochentage und Feiertage im Zeitraum werden übersprungen. Abwesenheitstage gelten als erfüllt; das Soll entfällt.</p>
+  </section>
+</div>
+{% endblock %}

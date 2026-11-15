@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2f55c9">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Stempel">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}Heute{% endblock %} · Stempel</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/app-icon.svg') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='fonts.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="{{ url_for('index') }}"><img class="brand-mark" src="{{ url_for('static', filename='icons/app-icon.svg') }}" alt=""><span>stempel<span class="accent">.</span></span></a>
+      {% if current_user.is_authenticated %}
+      <nav class="navigation" aria-label="Hauptnavigation">
+        {% for endpoint, label in [('index', 'Heute'), ('times', 'Zeiten'), ('absences', 'Abwesenheit'), ('automation', 'Automatik'), ('account', 'Konto')] %}
+        <a class="{% if request.endpoint == endpoint %}active{% endif %}" href="{{ url_for(endpoint) }}">{{ label }}</a>
+        {% endfor %}
+        {% if current_user.role == 'admin' %}<a class="{% if request.endpoint == 'users' %}active{% endif %}" href="{{ url_for('users') }}">Benutzer</a>{% endif %}
+      </nav>
+      {% endif %}
+      <div class="top-actions">
+        <button class="icon-button theme-toggle" type="button" title="Darstellung: System / Hell / Dunkel" aria-label="Darstellung wechseln">◐</button>
+        {% if current_user.is_authenticated %}
+        <form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" type="submit" title="Abmelden" aria-label="Abmelden">↪</button></form>
+        {% endif %}
+      </div>
+    </div>
+  </header>
+  <main class="page {% block pageclass %}{% endblock %}">
+    {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="messages">{% for category, message in messages %}<div class="notice {{ category }}" role="status">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

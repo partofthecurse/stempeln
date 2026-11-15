@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Zeiten{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">ÜBERSICHT</span><h1>{{ MONTHS[first.month - 1] }} {{ first.year }}<span class="accent">.</span></h1><p>Netto {{ total_net | duration }} h · Soll bis heute {{ total_target | duration }} h · Monat {{ signed(total_diff) }} · Saldo {{ signed(month_balance) }}</p></div>
+  <div class="heading-actions">
+    <a class="icon-button" href="{{ url_for('times', monat=previous) }}" aria-label="Vormonat">‹</a>
+    <a class="secondary-button" href="{{ url_for('times') }}">Heute</a>
+    <a class="icon-button" href="{{ url_for('times', monat=following) }}" aria-label="Folgemonat">›</a>
+    <a class="secondary-button" href="{{ url_for('times_csv', monat=first.strftime('%Y-%m')) }}">CSV ↓</a>
+  </div>
+</div>
+
+<div class="times-layout">
+  <section class="card">
+    <table class="month-table">
+      <thead><tr><th>Tag</th><th>Zeiten</th><th class="num">Pause</th><th class="num">Netto</th><th class="num">Soll</th><th class="num">±</th></tr></thead>
+      <tbody>
+      {% for r in reports %}
+      <tr class="{% if r.day == today %}is-today{% endif %} {% if not r.target and not r.net %}is-off{% endif %}">
+        <td class="day-cell"><a href="{{ url_for('times', monat=first.strftime('%Y-%m'), tag=r.day.isoformat()) }}#entry-form"><strong>{{ r.weekday }}</strong> {{ r.day.strftime('%d.') }}</a></td>
+        <td>
+          {% if r.holiday %}<span class="tag holiday">{{ r.holiday }}</span>{% endif %}
+          {% if r.absence %}<span class="tag absence">{{ ABSENCE_LABELS[r.absence.kind] }}{% if r.absence.half %} ½{% endif %}</span>{% endif %}
+          {% for begin, finish, entry in r.segments %}<a class="span-chip {% if edit and edit.id == entry.id %}selected{% endif %}" href="{{ url_for('times', monat=first.strftime('%Y-%m'), edit=entry.id) }}#entry-form" title="{{ SOURCE_LABELS.get(entry.source, entry.source) }}{% if entry.note %}: {{ entry.note }}{% endif %}">{{ begin | clocktime }}–{{ 'jetzt' if entry.end_at is none else finish | clocktime }}{% if entry.note %} ✎{% endif %}</a>{% endfor %}
+        </td>
+        <td class="num muted">{{ (r.deducted + r.breaks) | duration if r.deducted or r.breaks else '' }}</td>
+        <td class="num">{{ r.net | duration if r.net else '' }}</td>
+        <td class="num muted">{{ r.target | duration if r.target else '' }}</td>
+        <td class="num {{ 'negative' if r.diff < 0 else 'positive' }}">{{ signed(r.diff) if r.day <= today and (r.net or r.target) else '' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">Pause = tatsächliche Pausen ab 15 Min. plus automatischer Abzug nach ArbZG. Tag anklicken, um etwas nachzutragen.</p>
+  </section>
+
+  <section class="card sticky" id="entry-form">
+    {% if edit %}
+    <span class="section-label">EINTRAG BEARBEITEN · {{ SOURCE_LABELS.get(edit.source, edit.source) | upper }}</span><h2>{{ edit.start_at | clocktime }}{% if edit.end_at %} – {{ edit.end_at | clocktime }}{% endif %}</h2>
+    <form method="post" action="{{ url_for('update_entry', entry_id=edit.id) }}" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Datum (Beginn)<input type="date" name="day" value="{{ edit.start_day }}" required></label>
+      <div class="field-row"><label>Beginn<input type="time" name="start" value="{{ edit.start_at | clocktime }}" required></label><label>Ende{% if edit.end_at is none %} <span class="hint">(leer = läuft)</span>{% endif %}<input type="time" name="end" value="{{ edit.end_at | clocktime if edit.end_at else '' }}" {% if edit.end_at is not none %}required{% endif %}></label></div>
+      <label>Notiz<input name="note" maxlength="200" value="{{ edit.note }}"></label>
+      <div class="form-actions"><button class="primary-button" type="submit">Speichern <span>→</span></button><a class="subtle-link" href="{{ url_for('times', monat=first.strftime('%Y-%m')) }}">Abbrechen</a></div>
+    </form>
+    <form method="post" action="{{ url_for('delete_entry', entry_id=edit.id) }}" data-confirm="Diesen Eintrag löschen?" class="delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="text-button danger" type="submit">Eintrag löschen</button></form>
+    {% else %}
+    <span class="section-label">NACHTRAGEN</span><h2>Zeit erfassen</h2>
+    <form method="post" action="{{ url_for('add_entry') }}" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Datum<input type="date" name="day" value="{{ default_day }}" required></label>
+      <div class="field-row"><label>Beginn<input type="time" name="start" required></label><label>Ende<input type="time" name="end" required></label></div>
+      <label>Notiz <span class="hint">optional, z. B. Projekt</span><input name="note" maxlength="200"></label>
+      <button class="primary-button" type="submit">Eintragen <span>→</span></button>
+    </form>
+    <p class="hint">Endet ein Eintrag vor seinem Beginn, zählt er über Mitternacht.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

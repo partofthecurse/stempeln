@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+{% block title %}Automatik{% endblock %}
+{% block content %}
+<div class="page-heading"><span class="eyebrow">AUTOMATISCH ERFASSEN</span><h1>Automatik<span class="accent">.</span></h1><p>Stempel kann selbst merken, wann du arbeitest: über dein Arbeitsgerät im Heimnetz oder über Signale von Home Assistant, Skripten und Kurzbefehlen.</p></div>
+
+<div class="settings-layout">
+  <section class="card"><span class="section-label">METHODE 1 · OHNE INSTALLATION</span><h2>Gerät im Heimnetz</h2>
+    <p>Stempel prüft jede Minute, ob dein Arbeitslaptop erreichbar ist. Taucht er auf, startet die Erfassung; ist er länger als die Leerlaufzeit weg, endet sie zum Zeitpunkt des letzten Kontakts.</p>
+    {% if profile.device_host %}<p class="device-line"><span class="status-dot {{ 'online' if device.online else ('offline' if device else '') }}"></span>{{ profile.device_host }}: {{ 'erreichbar' if device.online else ('nicht erreichbar' if device else 'wird gleich geprüft') }}</p>{% endif %}
+    <form method="post" class="form-stack compact">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="device">
+      <label>Hostname oder IP <span class="hint">leer = aus · optional mit :Port für TCP statt Ping</span><input name="device_host" value="{{ profile.device_host }}" placeholder="192.168.1.42 oder laptop.fritz.box" maxlength="253"></label>
+      <label>Leerlaufzeit in Minuten <span class="hint">so lange darf das Gerät fehlen (Standby, WLAN-Wechsel)</span><input type="number" name="idle_minutes" min="2" max="240" value="{{ profile.idle_minutes }}"></label>
+      <button class="primary-button" type="submit">Speichern <span>→</span></button>
+    </form>
+    {% if profile.device_host %}<form method="post" class="inline-actions"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="test"><button class="secondary-button" type="submit">Jetzt testen</button></form>{% endif %}
+    <p class="hint">Tipp: Gib dem Laptop im Router eine feste IP. Windows beantwortet Ping standardmäßig nicht – dann die Regel „Datei- und Druckerfreigabe (Echoanforderung – ICMPv4)“ aktivieren oder einen offenen Port angeben (z. B. <code>:445</code>). Stempelst du manuell aus, während das Gerät noch online ist, startet die Automatik erst nach der nächsten Leerlaufpause neu.</p>
+  </section>
+
+  <section class="card"><span class="section-label">METHODE 2 · API</span><h2>Tokens</h2>
+    <p>Für Home Assistant, einen kleinen Agenten auf dem Arbeits-PC, NFC-Tags oder iOS-/Android-Kurzbefehle.</p>
+    {% if new_token %}<div class="notice success"><strong>Neues Token – wird nur jetzt angezeigt:</strong><code class="token">{{ new_token }}</code></div>{% endif %}
+    {% for token in tokens %}<div class="user-row token-row"><div><strong>{{ token.name }}</strong><div class="user-details">erstellt {{ token.created_at | stamp }} · {% if token.last_used_at %}zuletzt genutzt {{ token.last_used_at | stamp }}{% else %}noch nie genutzt{% endif %}</div></div>
+      <form method="post" data-confirm="Token widerrufen? Geräte damit funktionieren dann nicht mehr."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="revoke"><input type="hidden" name="token_id" value="{{ token.id }}"><button class="text-button" type="submit">Widerrufen</button></form></div>{% endfor %}
+    <form method="post" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="token"><input name="name" maxlength="60" placeholder="Name, z. B. Home Assistant" required><button class="secondary-button" type="submit">Token erstellen</button></form>
+  </section>
+</div>
+
+<section class="card docs">
+  <span class="section-label">BEISPIELE</span><h2>So sprichst du die API an</h2>
+  <p><code>POST {{ base_url }}/api/v1/clock</code> mit Header <code>Authorization: Bearer &lt;token&gt;</code> und JSON <code>{"action": "…"}</code>. Mögliche Aktionen:</p>
+  <ul class="plain-list">
+    <li><code>in</code> / <code>out</code> / <code>toggle</code> – ein- oder ausstempeln, z. B. per NFC-Tag am Schreibtisch.</li>
+    <li><code>heartbeat</code> – „ich arbeite gerade“. Startet bei Bedarf eine Sitzung; bleiben die Signale länger als die Leerlaufzeit aus, wird automatisch ausgestempelt.</li>
+  </ul>
+  <p><code>GET {{ base_url }}/api/v1/status</code> liefert Status, heutige Nettozeit und Saldo (z. B. für ein Home-Assistant-Dashboard).</p>
+  <details><summary>curl</summary><pre>curl -X POST {{ base_url }}/api/v1/clock \
+  -H "Authorization: Bearer stp_…" -H "Content-Type: application/json" \
+  -d '{"action": "toggle"}'</pre></details>
+  <details><summary>Home Assistant (rest_command + Automation)</summary><pre># configuration.yaml
+rest_command:
+  stempel:
+    url: "{{ base_url }}/api/v1/clock"
+    method: post
+    headers:
+      Authorization: !secret stempel_token   # "Bearer stp_…"
+    content_type: "application/json"
+    payload: '{"action": "{{ '{{' }} action {{ '}}' }}"}'
+
+# Automation: Arbeits-PC an/aus (z. B. über HASS.Agent, Ping- oder Steckdosen-Sensor)
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.arbeitslaptop
+actions:
+  - action: rest_command.stempel
+    data:
+      action: "{{ '{{' }} 'in' if trigger.to_state.state == 'on' else 'out' {{ '}}' }}"</pre></details>
+  <details><summary>Windows-Agent (PowerShell, meldet nur bei aktiver Nutzung)</summary><a class="text-link" href="{{ url_for('agent_script', system='windows') }}">stempel-agent.ps1 herunterladen ↓</a><pre>{% include 'agent_windows.txt' %}</pre></details>
+  <details><summary>Linux/macOS-Agent (Shell, per cron/systemd-Timer jede Minute)</summary><a class="text-link" href="{{ url_for('agent_script', system='unix') }}">stempel-agent.sh herunterladen ↓</a><pre>{% include 'agent_unix.txt' %}</pre></details>
+</section>
+{% endblock %}

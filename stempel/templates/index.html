@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% block title %}Heute{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">{{ report.weekday | upper }}, {{ report.day.strftime('%d.%m.%Y') }}</span><h1>Hallo {{ current_user.username }}<span class="accent">.</span></h1>
+    <p>{% if report.holiday %}Heute ist Feiertag: {{ report.holiday }}.{% elif report.absence %}Heute eingetragen: {{ ABSENCE_LABELS[report.absence.kind] }}{% if report.absence.half %} (halber Tag){% endif %}.{% elif not report.target %}Heute ist kein Arbeitstag.{% else %}Tagessoll {{ report.target | duration }} h.{% endif %}</p></div>
+</div>
+
+<section class="stamp-card card {% if open_entry %}is-running{% endif %}">
+  <div class="stamp-status">
+    <span class="section-label">{% if open_entry %}EINGESTEMPELT SEIT {{ open_entry.start_at | clocktime }} · {{ SOURCE_LABELS.get(open_entry.source, open_entry.source) | upper }}{% else %}AUSGESTEMPELT{% endif %}</span>
+    <div class="timer" {% if open_entry %}data-running="1"{% endif %} data-net="{{ report.net }}" data-now="{{ now }}">{{ report.net | duration }}</div>
+    <p class="muted">heute netto{% if report.deducted %} · {{ report.deducted | duration }} Pause abgezogen{% endif %}{% if finish %} · Soll erreicht ca. <strong>{{ finish | clocktime }}</strong>{% elif report.target and report.net >= report.target %} · Soll erreicht ✓{% endif %}</p>
+    {% if open_entry and now - open_entry.start_at > 12 * 3600 %}<p class="notice error">Dieser Eintrag läuft seit über 12 Stunden – vergessen auszustempeln? Unter <a href="{{ url_for('times', edit=open_entry.id) }}">Zeiten</a> korrigieren.</p>{% endif %}
+  </div>
+  <form method="post" action="{{ url_for('stamp') }}" class="stamp-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if open_entry %}
+    <input type="hidden" name="action" value="out"><button class="stamp-button out" type="submit"><span>■</span>Ausstempeln</button>
+    {% else %}
+    <input type="hidden" name="action" value="in"><input class="note-input" name="note" maxlength="200" placeholder="Notiz (optional)"><button class="stamp-button" type="submit"><span>▶</span>Einstempeln</button>
+    {% endif %}
+  </form>
+</section>
+
+<div class="stat-grid">
+  <div class="stat card"><span class="section-label">SALDO BIS GESTERN</span><strong class="{{ 'negative' if balance < 0 else 'positive' }}">{{ signed(balance) }}</strong><small>inkl. heute: {{ signed(balance_now) }}</small></div>
+  <div class="stat card"><span class="section-label">DIESE WOCHE</span><strong>{{ week_net | duration }}</strong><small>von {{ week_target | duration }} h Soll</small></div>
+  <div class="stat card"><span class="section-label">RESTURLAUB {{ report.day.year }}</span><strong>{{ '%g' | format(vacation_left) }}</strong><small>Tage von {{ '%g' | format(profile.vacation_days) }}</small></div>
+  <div class="stat card"><span class="section-label">AUTOMATIK</span>{% if profile.device_host %}<strong class="small-strong"><span class="status-dot {{ 'online' if device.online else ('offline' if device else '') }}"></span>{{ 'online' if device.online else ('offline' if device else 'prüfe …') }}</strong><small>{{ profile.device_host }}</small>{% else %}<strong class="small-strong">aus</strong><small><a class="text-link" href="{{ url_for('automation') }}">einrichten →</a></small>{% endif %}</div>
+</div>
+
+<section class="week card">
+  <div class="section-heading"><span class="section-label">WOCHE</span><a class="text-link" href="{{ url_for('times') }}">Alle Zeiten →</a></div>
+  {% set scale = [week | map(attribute='net') | max, week | map(attribute='target') | max, 1] | max %}
+  {% for day in week %}
+  <div class="week-row {% if day.day == report.day %}is-today{% endif %}">
+    <span class="week-day">{{ day.weekday }} <small>{{ day.day.strftime('%d.%m.') }}</small></span>
+    <span class="bar"><span class="bar-fill" data-width="{{ (day.net / scale * 100) | round(1) }}"></span>{% if day.target %}<span class="bar-target" data-left="{{ (day.target / scale * 100) | round(1) }}"></span>{% endif %}</span>
+    <span class="week-value">{% if day.holiday %}<small>{{ day.holiday }}</small>{% elif day.absence %}<small>{{ ABSENCE_LABELS[day.absence.kind] }}</small>{% endif %} {{ day.net | duration if day.net or day.target else '–' }}</span>
+  </div>
+  {% endfor %}
+</section>
+
+{% if report.segments %}
+<section class="card">
+  <div class="section-heading"><span class="section-label">HEUTE</span></div>
+  <ul class="entry-list">{% for begin, finish, entry in report.segments %}<li><span class="mono">{{ begin | clocktime }} – {{ 'läuft' if entry.end_at is none else finish | clocktime }}</span><span class="tag">{{ SOURCE_LABELS.get(entry.source, entry.source) }}</span><span class="muted">{{ entry.note }}</span></li>{% endfor %}</ul>
+</section>
+{% endif %}
+{% endblock %}

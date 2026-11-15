@@ -1,0 +1,12 @@
+.env
+.env.*
+.git
+**/__pycache__/
+*.py[cod]
+*.db
+*.sqlite*
+data
+tests
+.venv
+.github
+compose*.yaml

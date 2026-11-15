@@ -1,0 +1,17 @@
+#!/bin/sh
+# Stempel-Agent für Linux/macOS: sendet ein Lebenszeichen, wenn der Rechner gerade benutzt wird.
+# Einrichtung (crontab -e):  * * * * * /usr/local/bin/stempel-agent.sh
+URL="{{ base_url }}/api/v1/clock"
+TOKEN="stp_HIER_TOKEN_EINTRAGEN"
+IDLE_LIMIT=300
+
+idle=0
+if command -v ioreg >/dev/null 2>&1; then
+  idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
+elif command -v xprintidle >/dev/null 2>&1 && [ -n "$DISPLAY" ]; then
+  idle=$(( $(xprintidle) / 1000 ))
+fi
+[ "${idle:-0}" -lt "$IDLE_LIMIT" ] || exit 0
+
+curl -fsS -m 10 -X POST "$URL" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"action":"heartbeat"}' >/dev/null

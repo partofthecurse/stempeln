@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Konto{% endblock %}
+{% block content %}
+<div class="page-heading"><span class="eyebrow">EINSTELLUNGEN</span><h1>Dein Konto<span class="accent">.</span></h1><p>Angemeldet als {{ current_user.username }}</p></div>
+<section class="card">
+  <span class="section-label">ARBEITSZEITMODELL</span><h2>Soll, Pausen & Feiertage</h2>
+  <form method="post" class="form-stack model-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="model">
+    <div class="field-row three">
+      <label>Wochenstunden <span class="hint">z. B. 40, 38,5 oder 38:30</span><input name="weekly_hours" value="{{ weekly }}" inputmode="decimal" required></label>
+      <label>Urlaubstage pro Jahr<input name="vacation_days" value="{{ '%g' | format(profile.vacation_days) }}" inputmode="decimal" required></label>
+      <label>Bundesland <span class="hint">für Feiertage</span><select name="region">{% for code, name in REGIONS.items() %}<option value="{{ code }}" {% if profile.region == code %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+    </div>
+    <fieldset class="weekday-picker"><legend>Arbeitstage <span class="hint">das Wochensoll wird gleichmäßig verteilt</span></legend>
+      {% for name in WEEKDAYS %}<label><input type="checkbox" name="workdays" value="{{ loop.index0 }}" {% if loop.index0 | string in profile.workdays %}checked{% endif %}><span>{{ name }}</span></label>{% endfor %}
+    </fieldset>
+    <label class="check"><input type="checkbox" name="break_rule" value="1" {% if profile.break_rule %}checked{% endif %}> Gesetzliche Pause automatisch abziehen (30 Min. ab 6 h, 45 Min. ab 9 h; tatsächliche Pausen ab 15 Min. werden angerechnet)</label>
+    <div class="field-row three">
+      <label>Saldo zählt ab <span class="hint">leer = erster Eintrag</span><input type="date" name="balance_start" value="{{ profile.balance_start or '' }}"></label>
+      <label>Übertrag <span class="hint">Stunden, z. B. 12:30 oder -3</span><input name="balance_offset" value="{{ offset }}"></label>
+      <div class="form-end"><button class="primary-button" type="submit">Speichern <span>→</span></button></div>
+    </div>
+  </form>
+</section>
+<div class="settings-layout">
+  <section class="card settings-block"><span class="section-label">ANMELDUNG</span><h2>Zwei-Faktor-Authentifizierung</h2>
+    {% if current_user.totp_enabled %}<p>Dein Konto ist zusätzlich abgesichert.</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="disable"><label>Passwort<input type="password" name="password" autocomplete="current-password" required></label><label>Authenticator- oder Wiederherstellungscode<input name="code" autocomplete="one-time-code" required></label><button class="secondary-button" type="submit">2FA deaktivieren</button></form>
+    {% elif qr %}<p>Mit deiner Authenticator-App scannen und den aktuellen Code bestätigen.</p><img class="qr" src="data:image/png;base64,{{ qr }}" alt="QR-Code für Authenticator-App"><p class="secret-code">{{ secret }}</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm"><label>Bestätigungscode<input name="code" autocomplete="one-time-code" inputmode="numeric" required></label><button class="primary-button" type="submit">Aktivieren <span>→</span></button></form>
+    {% else %}<p>Schütze dein Konto zusätzlich mit einer Authenticator-App.</p><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="start"><button class="secondary-button" type="submit">2FA einrichten</button></form>{% endif %}
+  </section>
+  <section class="card settings-block"><span class="section-label">ZUGANG</span><h2>Passwort ändern</h2><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="password"><label>Aktuelles Passwort<input type="password" name="current_password" autocomplete="current-password" required></label><label>Neues Passwort <span class="hint">mind. 12 Zeichen</span><input type="password" name="new_password" minlength="12" autocomplete="new-password" required></label><button class="secondary-button" type="submit">Passwort ändern</button></form></section>
+</div>
+{% endblock %}
