@@ -1,42 +1,42 @@
 {% extends 'base.html' %}
-{% block title %}Konto{% endblock %}
+{% block title %}{{ _('Konto') }}{% endblock %}
 {% block content %}
-<div class="page-heading"><span class="eyebrow">EINSTELLUNGEN</span><h1>Dein Konto<span class="accent">.</span></h1><p>Angemeldet als {{ current_user.username }}</p></div>
+<div class="page-heading"><span class="eyebrow">{{ _('EINSTELLUNGEN') }}</span><h1>{{ _('Dein Konto') }}<span class="accent">.</span></h1><p>{{ _('Angemeldet als') }} {{ current_user.username }}</p></div>
 <section class="card">
-  <span class="section-label">ARBEITSZEITMODELL</span><h2>Soll, Pausen & Feiertage</h2>
+  <span class="section-label">{{ _('ARBEITSZEITMODELL') }}</span><h2>{{ _('Soll, Pausen & Feiertage') }}</h2>
   <form method="post" class="form-stack model-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="model">
-    <label class="check"><input type="checkbox" name="track_balance" value="1" {% if profile.track_balance %}checked{% endif %}> <span><strong>Soll & Überstundensaldo erfassen</strong><br><span class="hint">Für Angestellte. Ausgeschaltet (z. B. freiberuflich) zählt Stempeln nur Stunden je Projekt; Saldo, Soll, Resturlaub und Abwesenheit werden ausgeblendet.</span></span></label>
+    <label class="check"><input type="checkbox" name="track_balance" value="1" {% if profile.track_balance %}checked{% endif %}> <span><strong>{{ _('Soll & Überstundensaldo erfassen') }}</strong><br><span class="hint">{{ _('Für Angestellte. Ausgeschaltet (z. B. freiberuflich) zählt Stempeln nur Stunden je Projekt; Saldo, Soll, Resturlaub und Abwesenheit werden ausgeblendet.') }}</span></span></label>
     <div class="field-row three">
-      <label>Wochenstunden <span class="hint">z. B. 40, 38,5 oder 38:30</span><input name="weekly_hours" value="{{ weekly }}" inputmode="decimal" required></label>
-      <label>Urlaubstage pro Jahr<input name="vacation_days" value="{{ '%g' | format(profile.vacation_days) }}" inputmode="decimal" required></label>
-      <label>Bundesland <span class="hint">für Feiertage</span><select name="region">{% for code, name in REGIONS.items() %}<option value="{{ code }}" {% if profile.region == code %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+      <label>{{ _('Wochenstunden') }} <span class="hint">{{ _('z. B. 40, 38,5 oder 38:30') }}</span><input name="weekly_hours" value="{{ weekly }}" inputmode="decimal" required></label>
+      <label>{{ _('Urlaubstage pro Jahr') }}<input name="vacation_days" value="{{ '%g' | format(profile.vacation_days) }}" inputmode="decimal" required></label>
+      <label>{{ _('Bundesland') }} <span class="hint">{{ _('für Feiertage') }}</span><select name="region">{% for code, name in REGIONS.items() %}<option value="{{ code }}" {% if profile.region == code %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
     </div>
-    <fieldset class="weekday-picker"><legend>Arbeitstage <span class="hint">das Wochensoll wird gleichmäßig verteilt</span></legend>
+    <fieldset class="weekday-picker"><legend>{{ _('Arbeitstage') }} <span class="hint">{{ _('das Wochensoll wird gleichmäßig verteilt') }}</span></legend>
       {% for name in WEEKDAYS %}<label><input type="checkbox" name="workdays" value="{{ loop.index0 }}" {% if loop.index0 | string in profile.workdays %}checked{% endif %}><span>{{ name }}</span></label>{% endfor %}
     </fieldset>
-    <label class="check"><input type="checkbox" name="break_rule" value="1" {% if profile.break_rule %}checked{% endif %}> Gesetzliche Pause automatisch abziehen (30 Min. ab 6 h, 45 Min. ab 9 h; tatsächliche Pausen ab 15 Min. werden angerechnet)</label>
+    <label class="check"><input type="checkbox" name="break_rule" value="1" {% if profile.break_rule %}checked{% endif %}> {{ _('Gesetzliche Pause automatisch abziehen (30 Min. ab 6 h, 45 Min. ab 9 h; tatsächliche Pausen ab 15 Min. werden angerechnet)') }}</label>
     <div class="field-row three">
-      <label>Saldo zählt ab <span class="hint">leer = erster Eintrag</span><input type="date" name="balance_start" value="{{ profile.balance_start or '' }}"></label>
-      <label>Übertrag <span class="hint">Stunden, z. B. 12:30 oder -3</span><input name="balance_offset" value="{{ offset }}"></label>
-      <div class="form-end"><button class="primary-button" type="submit">Speichern <span>→</span></button></div>
+      <label>{{ _('Saldo zählt ab') }} <span class="hint">{{ _('leer = erster Eintrag') }}</span><input type="date" name="balance_start" value="{{ profile.balance_start or '' }}"></label>
+      <label>{{ _('Übertrag') }} <span class="hint">{{ _('Stunden, z. B. 12:30 oder -3') }}</span><input name="balance_offset" value="{{ offset }}"></label>
+      <div class="form-end"><button class="primary-button" type="submit">{{ _('Speichern') }} <span>→</span></button></div>
     </div>
   </form>
 </section>
 <section class="card">
-  <span class="section-label">FUNKTIONEN</span><h2>Rechnungen & E-Rechnung</h2>
+  <span class="section-label">{{ _('FUNKTIONEN') }}</span><h2>{{ _('Rechnungen & E-Rechnung') }}</h2>
   <form method="post" class="form-stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="invoicing">
-    <label class="check"><input type="checkbox" name="enabled" value="1" {% if invoicing %}checked{% endif %}> <span><strong>Rechnungen schreiben</strong><br><span class="hint">Erstellt aus erfassten Projektzeiten Rechnungen als ZUGFeRD-PDF (E-Rechnung nach EN 16931) und auf Wunsch als XRechnung-XML. Mit Kunden, Nummernkreis, Stunden- oder Tagessätzen, Storno und Zahlungsstatus.</span></span></label>
-    <div class="form-end">{% if invoicing %}<a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">Rechnungseinstellungen</a> {% endif %}<button class="primary-button" type="submit">Speichern <span>→</span></button></div>
+    <label class="check"><input type="checkbox" name="enabled" value="1" {% if invoicing %}checked{% endif %}> <span><strong>{{ _('Rechnungen schreiben') }}</strong><br><span class="hint">{{ _('Erstellt aus erfassten Projektzeiten Rechnungen als ZUGFeRD-PDF (E-Rechnung nach EN 16931) und auf Wunsch als XRechnung-XML. Mit Kunden, Nummernkreis, Stunden- oder Tagessätzen, Storno und Zahlungsstatus.') }}</span></span></label>
+    <div class="form-end">{% if invoicing %}<a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">{{ _('Rechnungseinstellungen') }}</a> {% endif %}<button class="primary-button" type="submit">{{ _('Speichern') }} <span>→</span></button></div>
   </form>
 </section>
 <div class="settings-layout">
-  <section class="card settings-block"><span class="section-label">ANMELDUNG</span><h2>Zwei-Faktor-Authentifizierung</h2>
-    {% if current_user.totp_enabled %}<p>Dein Konto ist zusätzlich abgesichert.</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="disable"><label>Passwort<input type="password" name="password" autocomplete="current-password" required></label><label>Authenticator- oder Wiederherstellungscode<input name="code" autocomplete="one-time-code" required></label><button class="secondary-button" type="submit">2FA deaktivieren</button></form>
-    {% elif qr %}<p>Mit deiner Authenticator-App scannen und den aktuellen Code bestätigen.</p><img class="qr" src="data:image/png;base64,{{ qr }}" alt="QR-Code für Authenticator-App"><p class="secret-code">{{ secret }}</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm"><label>Bestätigungscode<input name="code" autocomplete="one-time-code" inputmode="numeric" required></label><button class="primary-button" type="submit">Aktivieren <span>→</span></button></form>
-    {% else %}<p>Schütze dein Konto zusätzlich mit einer Authenticator-App.</p><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="start"><button class="secondary-button" type="submit">2FA einrichten</button></form>{% endif %}
+  <section class="card settings-block"><span class="section-label">{{ _('ANMELDUNG') }}</span><h2>{{ _('Zwei-Faktor-Authentifizierung') }}</h2>
+    {% if current_user.totp_enabled %}<p>{{ _('Dein Konto ist zusätzlich abgesichert.') }}</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="disable"><label>{{ _('Passwort') }}<input type="password" name="password" autocomplete="current-password" required></label><label>{{ _('Authenticator- oder Wiederherstellungscode') }}<input name="code" autocomplete="one-time-code" required></label><button class="secondary-button" type="submit">{{ _('2FA deaktivieren') }}</button></form>
+    {% elif qr %}<p>{{ _('Mit deiner Authenticator-App scannen und den aktuellen Code bestätigen.') }}</p><img class="qr" src="data:image/png;base64,{{ qr }}" alt="{{ _('QR-Code für Authenticator-App') }}"><p class="secret-code">{{ secret }}</p><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="confirm"><label>{{ _('Bestätigungscode') }}<input name="code" autocomplete="one-time-code" inputmode="numeric" required></label><button class="primary-button" type="submit">{{ _('Aktivieren') }} <span>→</span></button></form>
+    {% else %}<p>{{ _('Schütze dein Konto zusätzlich mit einer Authenticator-App.') }}</p><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="start"><button class="secondary-button" type="submit">{{ _('2FA einrichten') }}</button></form>{% endif %}
   </section>
-  <section class="card settings-block"><span class="section-label">ZUGANG</span><h2>Passwort ändern</h2><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="password"><label>Aktuelles Passwort<input type="password" name="current_password" autocomplete="current-password" required></label><label>Neues Passwort <span class="hint">mind. 12 Zeichen</span><input type="password" name="new_password" minlength="12" autocomplete="new-password" required></label><button class="secondary-button" type="submit">Passwort ändern</button></form></section>
+  <section class="card settings-block"><span class="section-label">{{ _('ZUGANG') }}</span><h2>{{ _('Passwort ändern') }}</h2><form method="post" class="form-stack compact"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="password"><label>{{ _('Aktuelles Passwort') }}<input type="password" name="current_password" autocomplete="current-password" required></label><label>{{ _('Neues Passwort') }} <span class="hint">{{ _('mind. 12 Zeichen') }}</span><input type="password" name="new_password" minlength="12" autocomplete="new-password" required></label><button class="secondary-button" type="submit">{{ _('Passwort ändern') }}</button></form></section>
 </div>
 {% endblock %}

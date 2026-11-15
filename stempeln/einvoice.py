@@ -2,7 +2,7 @@
 
 from xml.etree import ElementTree as ET
 
-from . import billing
+from . import billing, i18n
 
 NS = {
     "rsm": "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100",
@@ -163,7 +163,7 @@ def build_cii(doc, xrechnung=False):
         _el(tax, "ram:CalculatedAmount", _amount(group["tax"]))
         _el(tax, "ram:TypeCode", "VAT")
         if group["reason"]:
-            _el(tax, "ram:ExemptionReason", group["reason"])
+            _el(tax, "ram:ExemptionReason", i18n.gettext(group["reason"], doc.get("language") or "de"))
         _el(tax, "ram:BasisAmount", _amount(group["basis"]))
         _el(tax, "ram:CategoryCode", group["category"])
         if group["reason_code"]:

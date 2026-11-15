@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS customers (
     vat_id TEXT NOT NULL DEFAULT '',
     leitweg_id TEXT NOT NULL DEFAULT '',
     tax_mode TEXT NOT NULL DEFAULT 'domestic' CHECK (tax_mode IN ('domestic', 'reverse_charge', 'non_eu')),
+    language TEXT NOT NULL DEFAULT 'de',
     payment_days INTEGER,
     archived INTEGER NOT NULL DEFAULT 0,
     UNIQUE (user_id, name COLLATE NOCASE)
@@ -136,6 +137,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     footer TEXT NOT NULL DEFAULT '',
     closing TEXT NOT NULL DEFAULT '',
     timesheet INTEGER NOT NULL DEFAULT 1,
+    language TEXT NOT NULL DEFAULT 'de',
     tax_mode TEXT,
     seller_json TEXT,
     buyer_json TEXT,
@@ -195,6 +197,8 @@ class Store:
             connection.execute("ALTER TABLE profiles ADD COLUMN track_balance INTEGER NOT NULL DEFAULT 1")
         if "default_project_id" not in profile_columns:
             connection.execute("ALTER TABLE profiles ADD COLUMN default_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL")
+        if "language" not in profile_columns:
+            connection.execute("ALTER TABLE profiles ADD COLUMN language TEXT NOT NULL DEFAULT ''")
         project_columns = columns("projects")
         if "customer_id" not in project_columns:
             connection.execute("ALTER TABLE projects ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL")
@@ -207,6 +211,10 @@ class Store:
             connection.execute("ALTER TABLE projects ADD COLUMN billing_unit TEXT NOT NULL DEFAULT 'hour'")
             connection.execute("ALTER TABLE projects ADD COLUMN day_hours TEXT NOT NULL DEFAULT '8'")
             connection.execute("ALTER TABLE projects ADD COLUMN day_rounding TEXT NOT NULL DEFAULT 'exact'")
+        if "language" not in columns("customers"):
+            connection.execute("ALTER TABLE customers ADD COLUMN language TEXT NOT NULL DEFAULT 'de'")
+        if "language" not in columns("invoices"):
+            connection.execute("ALTER TABLE invoices ADD COLUMN language TEXT NOT NULL DEFAULT 'de'")
         if "invoice_id" not in columns("entries"):
             connection.execute("ALTER TABLE entries ADD COLUMN invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL")
         connection.execute("CREATE INDEX IF NOT EXISTS entries_invoice ON entries(invoice_id)")

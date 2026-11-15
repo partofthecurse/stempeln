@@ -1,12 +1,13 @@
 const root = document.documentElement;
 const themeButton = document.querySelector('.theme-toggle');
-const themeLabels = { system: 'System', light: 'Hell', dark: 'Dunkel' };
+const english = root.lang === 'en';
+const themeLabels = english ? { system: 'System', light: 'Light', dark: 'Dark' } : { system: 'System', light: 'Hell', dark: 'Dunkel' };
 
 function applyTheme(theme) {
   if (theme === 'system') delete root.dataset.theme; else root.dataset.theme = theme;
   try { if (theme === 'system') localStorage.removeItem('stempeln-theme'); else localStorage.setItem('stempeln-theme', theme); } catch (error) { /* ignorieren */ }
   if (themeButton) {
-    themeButton.title = `Darstellung: ${themeLabels[theme]}`;
+    themeButton.title = `${english ? 'Theme' : 'Darstellung'}: ${themeLabels[theme]}`;
     themeButton.textContent = theme === 'dark' ? '☾' : theme === 'light' ? '☀' : '◐';
   }
 }

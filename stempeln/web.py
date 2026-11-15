@@ -12,23 +12,23 @@ from pathlib import Path
 
 import pyotp
 import qrcode
-from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from . import billing, clock
+from . import billing, clock, i18n
+from .i18n import N_, gettext as _
 from .invoicing import bp as invoicing_bp
 from .security import (DUMMY_HASH, clear_failures, hasher, load_keys, new_api_token, password_valid, rate_limited,
                        record_failure, recovery_hash, token_hash)
 from .store import Store
-from .timecalc import (ABSENCE_LABELS, REGIONS, WEEKDAYS, balance, day_bounds, day_report, days_between,
-                       fmt_duration, fmt_money, fmt_time, parse_local, project_totals, range_report, required_break_net,
+from .timecalc import (ABSENCE_LABELS, REGIONS, balance, day_bounds, day_report, days_between,
+                       fmt_duration, fmt_time, parse_local, project_totals, range_report, required_break_net,
                        target_seconds, to_local, today, vacation_used)
 
-SOURCE_LABELS = {"web": "Stempeluhr", "manual": "Nachgetragen", "api": "API", "heartbeat": "Lebenszeichen", "device": "Gerät"}
+SOURCE_LABELS = {"web": i18n.N_("Stempeluhr"), "manual": i18n.N_("Nachgetragen"), "api": "API", "heartbeat": i18n.N_("Lebenszeichen"), "device": i18n.N_("Gerät")}
 PROJECT_COLORS = ["blue", "green", "orange", "purple", "red", "teal", "yellow", "grey"]
-MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
 
 class User(UserMixin):
@@ -121,23 +121,59 @@ def create_app(test_config=None):
     if os.getenv("TRUST_PROXY", "false").lower() == "true":
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=0, x_for=0)
 
-    app.jinja_env.filters.update(duration=fmt_duration, clocktime=fmt_time, money=fmt_money,
-                                 stamp=lambda ts: to_local(ts).strftime("%d.%m.%Y %H:%M"),
-                                 hours=lambda seconds: f"{seconds / 3600:.2f}".replace(".", ","))
+    app.jinja_env.filters.update(duration=fmt_duration, clocktime=fmt_time, money=lambda cents: i18n.fmt_money(cents),
+                                 stamp=lambda ts: f"{i18n.fmt_date(to_local(ts))} {fmt_time(ts)}",
+                                 day=lambda value: i18n.fmt_date(value), dayshort=lambda value: i18n.fmt_date(value, short=True),
+                                 hours=lambda seconds: i18n.fmt_number(seconds / 3600, 2))
     app.jinja_env.globals.update(
-        signed=lambda seconds: fmt_duration(seconds, signed=True), WEEKDAYS=WEEKDAYS, ABSENCE_LABELS=ABSENCE_LABELS,
-        SOURCE_LABELS=SOURCE_LABELS, REGIONS=REGIONS, MONTHS=MONTHS, PROJECT_COLORS=PROJECT_COLORS,
+        signed=lambda seconds: fmt_duration(seconds, signed=True), PROJECT_COLORS=PROJECT_COLORS, _=i18n.template_gettext,
+        rate_suffix=lambda project: _(billing.rate_suffix(project)), LANGUAGES=i18n.LANGUAGES,
+        fmt_quantity=lambda value: billing.fmt_quantity(value), unit_label=lambda unit, quantity=1: billing.unit_label(unit, quantity),
     )
-
-    app.jinja_env.globals.update(rate_suffix=billing.rate_suffix, BILLING_UNITS=billing.BILLING_UNITS, DAY_ROUNDING=billing.DAY_ROUNDING)
     app.register_blueprint(invoicing_bp)
+
+    def translated(mapping):
+        return {key: _(value) if isinstance(value, str) else tuple(_(part) for part in value) for key, value in mapping.items()}
+
+    @app.before_request
+    def choose_language():
+        language = None
+        if current_user.is_authenticated:
+            language = store.profile(current_user.uid).get("language") or None
+        language = language or request.cookies.get("lang")
+        if language not in i18n.LANGUAGES:
+            language = i18n.negotiate(request.headers.get("Accept-Language")) or i18n.default_language()
+        g.lang = language
 
     @app.context_processor
     def navigation_context():
+        language = i18n.current()
+        context = {
+            "lang": language, "MONTHS": i18n.MONTHS[language], "WEEKDAYS": i18n.WEEKDAYS[language],
+            "ABSENCE_LABELS": translated(ABSENCE_LABELS), "SOURCE_LABELS": translated(SOURCE_LABELS),
+            "REGIONS": {key: _(value) if not key else value for key, value in REGIONS.items()},
+            "BILLING_UNITS": translated(billing.BILLING_UNITS), "DAY_ROUNDING": translated(billing.DAY_ROUNDING),
+            "STATUS_LABELS": translated(billing.STATUS_LABELS), "POSITION_MODES": translated(billing.POSITION_MODES),
+            "VAT_MODES": translated(billing.VAT_MODES), "ROUNDING_CHOICES": translated(billing.ROUNDING_CHOICES),
+            "CUSTOMER_TAX_MODES": translated(billing.CUSTOMER_TAX_MODES), "UNITS": translated(billing.UNITS),
+        }
         if current_user.is_authenticated:
-            return {"nav_profile": store.profile(current_user.uid),
-                    "nav_invoicing": store.invoice_settings(current_user.uid)["enabled"]}
-        return {}
+            context.update(nav_profile=store.profile(current_user.uid),
+                           nav_invoicing=store.invoice_settings(current_user.uid)["enabled"])
+        return context
+
+    @app.post("/sprache")
+    def set_language():
+        language = request.form.get("lang", "")
+        if language not in i18n.LANGUAGES:
+            abort(400)
+        if current_user.is_authenticated:
+            store.update_profile(current_user.uid, language=language)
+        target = request.form.get("next", "")
+        response = redirect(target if target.startswith("/") and not target.startswith("//") else url_for("index"))
+        response.set_cookie("lang", language, max_age=365 * 86400, samesite="Lax", httponly=True,
+                            secure=app.config["SESSION_COOKIE_SECURE"])
+        return response
 
     @login_manager.user_loader
     def load_user(identifier):
@@ -152,7 +188,7 @@ def create_app(test_config=None):
     @login_manager.unauthorized_handler
     def unauthorized():
         if request.path.startswith("/api/"):
-            return jsonify(error="Anmeldung erforderlich"), 401
+            return jsonify(error=_("Anmeldung erforderlich")), 401
         return redirect(url_for("login"))
 
     def admin_required(view):
@@ -234,14 +270,14 @@ def create_app(test_config=None):
             password = request.form.get("password", "")[:1024]
             keys = subjects(username)
             if rate_limited(store, keys):
-                flash("Zu viele Versuche. Bitte später erneut versuchen.", "error")
+                flash(_("Zu viele Versuche. Bitte später erneut versuchen."), "error")
             else:
                 with store.connect() as connection:
                     row = connection.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
                 valid = password_valid(password, row["password_hash"] if row else DUMMY_HASH)
                 if not row or not row["active"] or not valid:
                     record_failure(store, keys)
-                    flash("Anmeldung fehlgeschlagen.", "error")
+                    flash(_("Anmeldung fehlgeschlagen."), "error")
                 elif row["totp_secret"]:
                     session.clear()
                     session.update(pending_user=row["id"], pending_epoch=row["epoch"], pending_since=int(time.time()))
@@ -268,7 +304,7 @@ def create_app(test_config=None):
         if request.method == "POST":
             keys = subjects(row["username"])
             if rate_limited(store, keys):
-                flash("Zu viele Versuche. Bitte später erneut versuchen.", "error")
+                flash(_("Zu viele Versuche. Bitte später erneut versuchen."), "error")
             elif verify_second_factor(user_id, request.form.get("code", "")):
                 clear_failures(store, keys)
                 session.clear()
@@ -277,7 +313,7 @@ def create_app(test_config=None):
                 return redirect(url_for("index"))
             else:
                 record_failure(store, keys)
-                flash("Anmeldung fehlgeschlagen.", "error")
+                flash(_("Anmeldung fehlgeschlagen."), "error")
         return render_template("login.html", otp=True)
 
     @app.post("/logout")
@@ -325,14 +361,14 @@ def create_app(test_config=None):
         note = request.form.get("note", "").strip()
         if action == "in":
             if not clock.clock_in(store, current_user.uid, "web", note=note, project_id=project_id):
-                flash("Du bist bereits eingestempelt.", "error")
+                flash(_("Du bist bereits eingestempelt."), "error")
         elif action == "switch":
             if clock.switch(store, current_user.uid, project_id, "web", note=note):
                 project = store.project(current_user.uid, project_id) if project_id else None
-                flash(f"Gewechselt zu {project['name'] if project else 'ohne Projekt'}.", "success")
+                flash(_("Gewechselt zu %(project)s.", project=project["name"] if project else _("ohne Projekt")), "success")
         elif action == "out":
             if not clock.clock_out(store, current_user.uid):
-                flash("Du bist nicht eingestempelt.", "error")
+                flash(_("Du bist nicht eingestempelt."), "error")
         else:
             abort(400)
         return redirect(url_for("index"))
@@ -383,22 +419,22 @@ def create_app(test_config=None):
         except ValueError:
             start = None
         if start is None or (end is None and not allow_open):
-            flash("Bitte Datum, Beginn und Ende im Format HH:MM angeben.", "error")
+            flash(_("Bitte Datum, Beginn und Ende im Format HH:MM angeben."), "error")
             return None
         if end is not None and end <= start:
             end += 86400
         if end is not None and end - start > 24 * 3600:
-            flash("Ein Eintrag darf höchstens 24 Stunden lang sein.", "error")
+            flash(_("Ein Eintrag darf höchstens 24 Stunden lang sein."), "error")
             return None
         if end is None and start > time.time():
-            flash("Ein laufender Eintrag kann nicht in der Zukunft beginnen.", "error")
+            flash(_("Ein laufender Eintrag kann nicht in der Zukunft beginnen."), "error")
             return None
         if store.overlaps(current_user.uid, start, end, exclude_id):
-            flash("Der Eintrag überschneidet sich mit einem vorhandenen Eintrag.", "error")
+            flash(_("Der Eintrag überschneidet sich mit einem vorhandenen Eintrag."), "error")
             return None
         valid, project_id = project_from_form()
         if not valid:
-            flash("Unbekanntes Projekt.", "error")
+            flash(_("Unbekanntes Projekt."), "error")
             return None
         return start, end, note, day, project_id
 
@@ -413,17 +449,17 @@ def create_app(test_config=None):
                     "INSERT INTO entries (user_id, start_at, end_at, source, note, project_id) VALUES (?, ?, ?, 'manual', ?, ?)",
                     (current_user.uid, start, end, note, project_id),
                 )
-            flash("Eintrag gespeichert.", "success")
+            flash(_("Eintrag gespeichert."), "success")
             return redirect(url_for("times", monat=day.strftime("%Y-%m")))
         return redirect(url_for("times", monat=request.form.get("day", "")[:7]))
 
     def locked(entry):
         if entry["invoice_status"] in ("open", "paid"):
-            flash(f"Dieser Eintrag ist mit Rechnung {entry['invoice_number']} abgerechnet und gesperrt. "
-                  "Zum Ändern die Rechnung stornieren.", "error")
+            flash(_("Dieser Eintrag ist mit Rechnung %(number)s abgerechnet und gesperrt. Zum Ändern die Rechnung stornieren.",
+                    number=entry["invoice_number"]), "error")
             return True
         if entry["invoice_status"] == "draft":
-            flash("Hinweis: Der Eintrag gehört zu einem Rechnungsentwurf – dort ggf. „Neu berechnen“.", "success")
+            flash(_("Hinweis: Der Eintrag gehört zu einem Rechnungsentwurf – dort ggf. „Neu berechnen“."), "success")
         return False
 
     @app.post("/entries/<int:entry_id>")
@@ -442,7 +478,7 @@ def create_app(test_config=None):
                 "source = CASE WHEN ? IS NULL THEN source ELSE 'manual' END WHERE id = ?",
                 (start, end, note, project_id, end, entry_id),
             )
-        flash("Eintrag aktualisiert.", "success")
+        flash(_("Eintrag aktualisiert."), "success")
         return redirect(url_for("times", monat=day.strftime("%Y-%m")))
 
     @app.post("/entries/<int:entry_id>/delete")
@@ -453,13 +489,20 @@ def create_app(test_config=None):
             return redirect(url_for("times", monat=to_local(entry["start_at"]).strftime("%Y-%m"), edit=entry_id))
         with store.connect() as connection:
             connection.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
-        flash("Eintrag gelöscht.", "success")
+        flash(_("Eintrag gelöscht."), "success")
         return redirect(url_for("times", monat=to_local(entry["start_at"]).strftime("%Y-%m")))
+
+    def csv_day(day):
+        return day.isoformat() if i18n.current() == "en" else day.strftime("%d.%m.%Y")
+
+    def csv_number(value):
+        text = f"{value:.2f}"
+        return text if i18n.current() == "en" else text.replace(".", ",")
 
     @app.get("/zeiten.csv")
     @login_required
     def times_csv():
-        first, last, _ = month_from_request()
+        first, last, _ignored = month_from_request()
         profile = store.profile(current_user.uid)
         project_filter = request.args.get("projekt", type=int)
         output = io.StringIO()
@@ -471,32 +514,34 @@ def create_app(test_config=None):
             suffix = "-" + re.sub(r"[^A-Za-z0-9_-]+", "-", project["name"]).strip("-") if project else ""
         if request.args.get("art") == "eintraege":
             projects_by_id = {p["id"]: p for p in store.projects(current_user.uid)}
-            writer.writerow(["Datum", "Beginn", "Ende", "Dauer", "Stunden", "Projekt", "Kunde", "Satz", "Einheit", "Betrag", "Rechnung", "Notiz"])
+            writer.writerow([_(label) for label in (N_("Datum"), N_("Beginn"), N_("Ende"), N_("Dauer"), N_("Stunden"), N_("Projekt"), N_("Kunde"), N_("Satz"), N_("Einheit"),
+                                                    N_("Betrag"), N_("Rechnung"), N_("Notiz"))])
             for report in reports:
                 for begin, finish, entry in report["segments"]:
                     seconds = finish - begin
                     project = projects_by_id.get(entry["project_id"])
                     rate = entry["project_rate"]
                     writer.writerow([
-                        report["day"].strftime("%d.%m.%Y"), fmt_time(begin), fmt_time(finish), fmt_duration(seconds),
-                        f"{seconds / 3600:.2f}".replace(".", ","), entry["project_name"] or "", entry["project_client"] or "",
-                        f"{rate / 100:.2f}".replace(".", ",") if rate else "",
-                        ("Tag" if entry["project_unit"] == "day" else "Stunde") if rate else "",
-                        f"{billing.project_amount(seconds, project) / 100:.2f}".replace(".", ",") if rate else "",
+                        csv_day(report["day"]), fmt_time(begin), fmt_time(finish), fmt_duration(seconds),
+                        csv_number(seconds / 3600), entry["project_name"] or "", entry["project_client"] or "",
+                        csv_number(rate / 100) if rate else "",
+                        (_("Tag") if entry["project_unit"] == "day" else _("Stunde")) if rate else "",
+                        csv_number(billing.project_amount(seconds, project) / 100) if rate else "",
                         entry["invoice_number"] or "", entry["note"],
                     ])
             filename = f"stempeln-eintraege-{first:%Y-%m}{suffix}.csv"
             return Response("\ufeff" + output.getvalue(), mimetype="text/csv",
                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-        writer.writerow(["Datum", "Tag", "Zeiten", "Brutto", "Pausenabzug", "Netto", "Netto (h)", "Soll", "Differenz", "Hinweis", "Projekte", "Notizen"])
+        writer.writerow([_(label) for label in (N_("Datum"), N_("Tag"), N_("Zeiten"), N_("Brutto"), N_("Pausenabzug"), N_("Netto"), N_("Netto (h)"), N_("Soll"), N_("Differenz"),
+                                                N_("Hinweis"), N_("Projekte"), N_("Notizen"))])
         for report in reports:
-            spans = ", ".join(f"{fmt_time(begin)}–{fmt_time(finish)}" for begin, finish, _ in report["segments"])
-            hint = report["holiday"] or (ABSENCE_LABELS[report["absence"]["kind"]] + (" (½)" if report["absence"]["half"] else "") if report["absence"] else "")
-            notes = " | ".join(entry["note"] for _, _, entry in report["segments"] if entry["note"])
-            project_names = ", ".join(dict.fromkeys(entry["project_name"] for _, _, entry in report["segments"] if entry["project_name"]))
+            spans = ", ".join(f"{fmt_time(begin)}–{fmt_time(finish)}" for begin, finish, _entry in report["segments"])
+            hint = report["holiday"] or (_(ABSENCE_LABELS[report["absence"]["kind"]]) + (" (½)" if report["absence"]["half"] else "") if report["absence"] else "")
+            notes = " | ".join(entry["note"] for _begin, _finish, entry in report["segments"] if entry["note"])
+            project_names = ", ".join(dict.fromkeys(entry["project_name"] for _begin, _finish, entry in report["segments"] if entry["project_name"]))
             writer.writerow([
-                report["day"].strftime("%d.%m.%Y"), report["weekday"], spans, fmt_duration(report["worked"]),
-                fmt_duration(report["deducted"]), fmt_duration(report["net"]), f"{report['net'] / 3600:.2f}".replace(".", ","),
+                csv_day(report["day"]), report["weekday"], spans, fmt_duration(report["worked"]),
+                fmt_duration(report["deducted"]), fmt_duration(report["net"]), csv_number(report["net"] / 3600),
                 fmt_duration(report["target"]), fmt_duration(report["diff"], signed=True), hint, project_names, notes,
             ])
         filename = f"stempeln-{first:%Y-%m}{suffix}.csv"
@@ -519,7 +564,7 @@ def create_app(test_config=None):
             day_rounding = request.form.get("day_rounding", "exact")
             if (not name or rate == -1 or color not in PROJECT_COLORS or unit not in billing.BILLING_UNITS
                     or day_hours is None or not 1 <= day_hours <= 24 or day_rounding not in billing.DAY_ROUNDING):
-                flash("Bitte einen Namen und ggf. einen gültigen Satz bzw. eine Tageslänge (1–24 h) angeben.", "error")
+                flash(_("Bitte einen Namen und ggf. einen gültigen Satz bzw. eine Tageslänge (1–24 h) angeben."), "error")
                 return redirect(url_for("projects", edit=project_id) if project_id else url_for("projects"))
             customer_id = store.customer_by_name(current_user.uid, client, create=True)
             values = (name, client, customer_id, rate, color, unit, str(day_hours), day_rounding)
@@ -535,9 +580,9 @@ def create_app(test_config=None):
                         connection.execute("INSERT INTO projects (user_id, name, client, customer_id, rate_cents, color, billing_unit, "
                                            "day_hours, day_rounding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (current_user.uid, *values))
             except sqlite3.IntegrityError:
-                flash("Ein Projekt mit diesem Namen gibt es schon.", "error")
+                flash(_("Ein Projekt mit diesem Namen gibt es schon."), "error")
                 return redirect(url_for("projects"))
-            flash(f"Projekt „{name}“ gespeichert.", "success")
+            flash(_("Projekt „%(name)s“ gespeichert.", name=name), "success")
             return redirect(url_for("projects"))
         first, last, following = month_from_request()
         profile = store.profile(current_user.uid)
@@ -564,10 +609,10 @@ def create_app(test_config=None):
         with store.connect() as connection:
             if action == "archive":
                 connection.execute("UPDATE projects SET archived = 1 - archived WHERE id = ?", (project_id,))
-                flash(f"„{project['name']}“ {'wieder aktiv' if project['archived'] else 'archiviert'}.", "success")
+                flash((_("„%(name)s“ wieder aktiv.") if project["archived"] else _("„%(name)s“ archiviert.")) % {"name": project["name"]}, "success")
             else:
                 connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-                flash(f"„{project['name']}“ gelöscht. Die Einträge bleiben ohne Projekt erhalten.", "success")
+                flash(_("„%(name)s“ gelöscht. Die Einträge bleiben ohne Projekt erhalten.", name=project["name"]), "success")
         return redirect(url_for("projects"))
 
     # ---------------------------------------------------------------- Abwesenheit
@@ -581,20 +626,20 @@ def create_app(test_config=None):
             kind = request.form.get("kind")
             half = 1 if request.form.get("half") == "1" else 0
             if not first or not last or last < first or (last - first).days > 366 or kind not in ABSENCE_LABELS:
-                flash("Bitte einen gültigen Zeitraum und eine Art angeben.", "error")
+                flash(_("Bitte einen gültigen Zeitraum und eine Art angeben."), "error")
             else:
                 days = [day for day in days_between(first, last) if target_seconds(profile, day)]
                 if half and len(days) != 1:
-                    flash("Halbe Tage bitte einzeln eintragen.", "error")
+                    flash(_("Halbe Tage bitte einzeln eintragen."), "error")
                 elif not days:
-                    flash("Im Zeitraum liegen keine Arbeitstage.", "error")
+                    flash(_("Im Zeitraum liegen keine Arbeitstage."), "error")
                 else:
                     with store.connect() as connection:
                         connection.executemany(
                             "INSERT OR REPLACE INTO absences (user_id, day, kind, half) VALUES (?, ?, ?, ?)",
                             [(current_user.uid, day.isoformat(), kind, half) for day in days],
                         )
-                    flash(f"{len(days) / (2 if half else 1):g} Arbeitstag(e) als {ABSENCE_LABELS[kind]} eingetragen.", "success")
+                    flash(_("%(days)s Arbeitstag(e) als %(kind)s eingetragen.", days=f"{len(days) / (2 if half else 1):g}", kind=_(ABSENCE_LABELS[kind])), "success")
             return redirect(url_for("absences", jahr=(first or today()).year))
         year = request.args.get("jahr", type=int) or today().year
         entries = store.absences_between(current_user.uid, f"{year}-01-01", f"{year}-12-31")
@@ -621,7 +666,7 @@ def create_app(test_config=None):
         with store.connect() as connection:
             connection.execute("DELETE FROM absences WHERE user_id = ? AND day BETWEEN ? AND ?",
                                (current_user.uid, first.isoformat(), last.isoformat()))
-        flash("Abwesenheit entfernt.", "success")
+        flash(_("Abwesenheit entfernt."), "success")
         return redirect(url_for("absences", jahr=first.year))
 
     # ---------------------------------------------------------------- Automatik
@@ -635,17 +680,17 @@ def create_app(test_config=None):
                 host = request.form.get("device_host", "").strip()
                 idle = request.form.get("idle_minutes", type=int)
                 if len(host) > 253 or not re.fullmatch(r"[A-Za-z0-9.\-:]*", host) or host.startswith("-") or idle is None or not 2 <= idle <= 240:
-                    flash("Bitte einen gültigen Hostnamen bzw. eine IP und eine Leerlaufzeit von 2–240 Minuten angeben.", "error")
+                    flash(_("Bitte einen gültigen Hostnamen bzw. eine IP und eine Leerlaufzeit von 2–240 Minuten angeben."), "error")
                 else:
                     valid, project_id = project_from_form("default_project_id")
                     store.update_profile(current_user.uid, device_host=host, idle_minutes=idle,
                                          default_project_id=project_id if valid else None)
-                    flash("Automatik gespeichert.", "success")
+                    flash(_("Automatik gespeichert."), "success")
             elif action == "test":
                 host = store.profile(current_user.uid)["device_host"]
                 if host:
                     online = clock.probe(host)
-                    flash(f"{host} ist erreichbar." if online else f"{host} antwortet nicht.", "success" if online else "error")
+                    flash(_("%(host)s ist erreichbar.", host=host) if online else _("%(host)s antwortet nicht.", host=host), "success" if online else "error")
             elif action == "token":
                 name = request.form.get("name", "").strip()[:60] or "Token"
                 token, hashed = new_api_token()
@@ -657,7 +702,7 @@ def create_app(test_config=None):
                 with store.connect() as connection:
                     connection.execute("DELETE FROM api_tokens WHERE id = ? AND user_id = ?",
                                        (request.form.get("token_id", type=int), current_user.uid))
-                flash("Token widerrufen.", "success")
+                flash(_("Token widerrufen."), "success")
             return redirect(url_for("automation"))
         with store.connect() as connection:
             tokens = [dict(row) for row in connection.execute(
@@ -694,6 +739,10 @@ def create_app(test_config=None):
         if not row:
             record_failure(store, keys)
             return None
+        # Textantworten in der Sprache des Token-Besitzers (falls gewählt)
+        language = store.profile(row["id"]).get("language")
+        if language in i18n.LANGUAGES:
+            g.lang = language
         return row["id"]
 
     def api_state(user_id, result=None):
@@ -719,30 +768,30 @@ def create_app(test_config=None):
         }
 
     def api_message(result, entry, report, saldo, now, profile_tracks_balance=True):
-        today_text = f"heute {fmt_duration(report['net'])} h"
+        today_text = _("heute %(net)s h", net=fmt_duration(report["net"]))
         if report["target"]:
-            today_text += f" von {fmt_duration(report['target'])} h"
+            today_text += " " + _("von %(target)s h", target=fmt_duration(report["target"]))
         summary = today_text
         if profile_tracks_balance:
-            summary += f" · Saldo {fmt_duration(saldo, signed=True)}"
+            summary += " · " + _("Saldo %(balance)s", balance=fmt_duration(saldo, signed=True))
         if entry:
             since = fmt_time(entry["start_at"])
             project = f" · {entry['project_name']}" if entry["project_name"] else ""
             if result == "started":
-                lead = f"✅ Eingestempelt um {since}{project}"
+                lead = "✅ " + _("Eingestempelt um %(time)s", time=since) + project
             elif result == "switched":
-                lead = f"🔀 Gewechselt um {since} zu {entry['project_name'] or 'ohne Projekt'}"
+                lead = "🔀 " + _("Gewechselt um %(time)s zu %(project)s", time=since, project=entry["project_name"] or _("ohne Projekt"))
             elif result == "unchanged":
-                lead = f"Schon eingestempelt seit {since}{project}"
+                lead = _("Schon eingestempelt seit %(time)s", time=since) + project
             else:
-                lead = f"⏱ Läuft seit {since}{project}"
+                lead = "⏱ " + _("Läuft seit %(time)s", time=since) + project
             finish = finish_estimate(report, now)
-            return f"{lead} · {today_text}" + (f" · Soll erreicht ca. {fmt_time(finish)}" if finish else "")
+            return f"{lead} · {today_text}" + (" · " + _("Soll erreicht ca. %(time)s", time=fmt_time(finish)) if finish else "")
         if result == "stopped":
-            return f"👋 Ausgestempelt um {fmt_time(now)} · {summary}"
+            return "👋 " + _("Ausgestempelt um %(time)s", time=fmt_time(now)) + f" · {summary}"
         if result == "suppressed":
-            return f"Automatik pausiert (manuell ausgestempelt) · {summary}"
-        return f"Nicht eingestempelt · {summary}"
+            return _("Automatik pausiert (manuell ausgestempelt)") + f" · {summary}"
+        return _("Nicht eingestempelt") + f" · {summary}"
 
     def api_response(payload, status=200):
         wants_text = request.args.get("format") == "text" or "text/plain" in request.headers.get("Accept", "").split(",")[0]
@@ -755,7 +804,7 @@ def create_app(test_config=None):
     def api_clock():
         user_id = api_user()
         if user_id is None:
-            return api_response({"error": "Ungültiges oder fehlendes Token"}, 401)
+            return api_response({"error": _("Ungültiges oder fehlendes Token")}, 401)
         data = request.get_json(silent=True) or request.form
         action = str(data.get("action") or request.args.get("action") or "toggle").strip().lower()
         reference = data.get("project") or request.args.get("project")
@@ -763,7 +812,7 @@ def create_app(test_config=None):
         if reference not in (None, ""):
             project = store.find_project(user_id, reference)
             if not project:
-                return api_response({"error": f"Projekt „{reference}“ nicht gefunden"}, 400)
+                return api_response({"error": _("Projekt „%(name)s“ nicht gefunden", name=reference)}, 400)
             project_id = project["id"]
         if action == "in":
             entry = store.open_entry(user_id)
@@ -778,14 +827,14 @@ def create_app(test_config=None):
         elif action == "heartbeat":
             result = clock.signal(store, user_id, "heartbeat")
         else:
-            return api_response({"error": "action muss in, out, toggle oder heartbeat sein"}, 400)
+            return api_response({"error": _("action muss in, out, toggle oder heartbeat sein")}, 400)
         return api_response({"result": result, **api_state(user_id, result)})
 
     @app.get("/api/v1/status")
     def api_status():
         user_id = api_user()
         if user_id is None:
-            return api_response({"error": "Ungültiges oder fehlendes Token"}, 401)
+            return api_response({"error": _("Ungültiges oder fehlendes Token")}, 401)
         return api_response(api_state(user_id))
 
     # ---------------------------------------------------------------- Konto
@@ -809,17 +858,17 @@ def create_app(test_config=None):
                     vacation = -1
                 if (weekly is None or not 0 <= weekly <= 6000 or region not in REGIONS or offset is None
                         or not 0 <= vacation <= 100 or (start_text and not parse_day(start_text))):
-                    flash("Bitte die Angaben zum Arbeitszeitmodell prüfen.", "error")
+                    flash(_("Bitte die Angaben zum Arbeitszeitmodell prüfen."), "error")
                 else:
                     store.update_profile(current_user.uid, track_balance=1 if request.form.get("track_balance") else 0,
                                          weekly_minutes=weekly, workdays=workdays, region=region,
                                          break_rule=1 if request.form.get("break_rule") else 0, vacation_days=vacation,
                                          balance_start=start_text or None, balance_offset=offset)
-                    flash("Arbeitszeitmodell gespeichert.", "success")
+                    flash(_("Arbeitszeitmodell gespeichert."), "success")
             elif action == "invoicing":
                 store.update_invoice_settings(current_user.uid, enabled=1 if request.form.get("enabled") else 0)
-                flash("Rechnungen aktiviert – trag zuerst deine Absenderdaten ein." if request.form.get("enabled")
-                      else "Rechnungen ausgeblendet. Vorhandene Rechnungen bleiben gespeichert.", "success")
+                flash(_("Rechnungen aktiviert – trag zuerst deine Absenderdaten ein.") if request.form.get("enabled")
+                      else _("Rechnungen ausgeblendet. Vorhandene Rechnungen bleiben gespeichert."), "success")
                 if request.form.get("enabled"):
                     return redirect(url_for("invoicing.invoice_settings"))
             elif action == "password":
@@ -832,7 +881,7 @@ def create_app(test_config=None):
                     session.clear()
                     return redirect(url_for("login"))
                 record_failure(store, keys)
-                flash("Passwort konnte nicht geändert werden.", "error")
+                flash(_("Passwort konnte nicht geändert werden."), "error")
             elif action == "start" and not row["totp_secret"]:
                 secret = pyotp.random_base32()
                 with store.connect() as connection:
@@ -846,13 +895,13 @@ def create_app(test_config=None):
                 matched_step = next((step for step in (current_step - 1, current_step, current_step + 1)
                                      if secrets.compare_digest(totp.at(step * totp.interval), code)), None)
                 if not rate_limited(store, keys) and matched_step is not None:
-                    codes = [secrets.token_hex(5).upper() for _ in range(8)]
+                    codes = [secrets.token_hex(5).upper() for _index in range(8)]
                     with store.connect() as connection:
                         connection.execute("UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, last_totp_step = ? WHERE id = ?", (matched_step, current_user.id))
                         connection.executemany("INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)", [(current_user.id, recovery_hash(c)) for c in codes])
                     return render_template("recovery.html", codes=codes)
                 record_failure(store, keys)
-                flash("Der Code ist ungültig.", "error")
+                flash(_("Der Code ist ungültig."), "error")
             elif action == "disable" and row["totp_secret"]:
                 keys = subjects(current_user.username)
                 if not rate_limited(store, keys) and password_valid(request.form.get("password", ""), row["password_hash"]) and verify_second_factor(current_user.id, request.form.get("code", "")):
@@ -863,7 +912,7 @@ def create_app(test_config=None):
                     session.clear()
                     return redirect(url_for("login"))
                 record_failure(store, keys)
-                flash("Bestätigung fehlgeschlagen.", "error")
+                flash(_("Bestätigung fehlgeschlagen."), "error")
             return redirect(url_for("account"))
         with store.connect() as connection:
             row = connection.execute("SELECT * FROM users WHERE id = ?", (current_user.id,)).fetchone()
@@ -890,14 +939,14 @@ def create_app(test_config=None):
             password = request.form.get("password", "")
             role = request.form.get("role", "user")
             if not 1 <= len(username) <= 80 or len(password) < 12 or role not in ("admin", "user"):
-                flash("Bitte gültigen Namen und ein Passwort mit mindestens 12 Zeichen eingeben.", "error")
+                flash(_("Bitte gültigen Namen und ein Passwort mit mindestens 12 Zeichen eingeben."), "error")
             else:
                 try:
                     with store.connect() as connection:
                         connection.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", (username, hasher.hash(password), role))
-                    flash("Benutzer angelegt.", "success")
+                    flash(_("Benutzer angelegt."), "success")
                 except sqlite3.IntegrityError:
-                    flash("Dieser Benutzername ist bereits vergeben.", "error")
+                    flash(_("Dieser Benutzername ist bereits vergeben."), "error")
             return redirect(url_for("users"))
         with store.connect() as connection:
             entries = [dict(row) for row in connection.execute("SELECT id, username, role, active, totp_secret IS NOT NULL AS totp_enabled FROM users ORDER BY username")]
@@ -915,7 +964,7 @@ def create_app(test_config=None):
                 abort(404)
             admins = connection.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND active = 1").fetchone()[0]
             if user["role"] == "admin" and user["active"] and admins == 1 and action in ("toggle", "role", "delete"):
-                flash("Der letzte aktive Administrator kann nicht entfernt werden.", "error")
+                flash(_("Der letzte aktive Administrator kann nicht entfernt werden."), "error")
             elif action == "toggle":
                 connection.execute("UPDATE users SET active = 1 - active, epoch = epoch + 1 WHERE id = ?", (user_id,))
             elif action == "role":
@@ -928,7 +977,7 @@ def create_app(test_config=None):
             else:
                 password = request.form.get("password", "")
                 if len(password) < 12:
-                    flash("Das Passwort muss mindestens 12 Zeichen haben.", "error")
+                    flash(_("Das Passwort muss mindestens 12 Zeichen haben."), "error")
                 else:
                     connection.execute("UPDATE users SET password_hash = ?, epoch = epoch + 1 WHERE id = ?", (hasher.hash(password), user_id))
         return redirect(url_for("users"))

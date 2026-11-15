@@ -31,6 +31,7 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
 - **Feiertage** je Bundesland (Paket `holidays`)
 - **Urlaub, Krankheit und freie Tage** inklusive halber Tage und Resturlaub
 - **Monatsübersicht**: Einträge nachtragen, korrigieren und löschen; CSV-Export, der sich direkt in Excel öffnen lässt
+- **Deutsch und Englisch**: Umschalter oben rechts (auch auf der Anmeldeseite), die Wahl wird pro Konto gespeichert; ohne Wahl gilt die Browsersprache. Zahlen-, Datums- und Betragsformate, Feiertagsnamen und die API-Textantworten folgen der Sprache. Rechnungen haben eine eigene Sprache je Kunde.
 - **Konten**: Admin und Benutzer, TOTP-2FA mit Wiederherstellungscodes und Login-Ratenbegrenzung. Jedes Konto sieht nur die eigenen Zeiten.
 
 ## Installation
@@ -94,14 +95,17 @@ Optional `"project": "Name"` oder die Projekt-ID: `in` bzw. `toggle` mit Projekt
 | `TZ` | `Europe/Berlin` | Zeitzone für Tagesgrenzen |
 | `MONITOR_INTERVAL_SECONDS` | `60` | Prüfintervall für Geräte und Leerlauf |
 | `COOKIE_SECURE` / `TRUST_PROXY` | `false` | nur hinter einem HTTPS-Reverse-Proxy auf `true` setzen |
+| `DEFAULT_LANGUAGE` | `de` | Sprache, wenn weder Konto noch Browser eine unterstützte Sprache liefern (`de`, `en`) |
 
 ## Entwicklung
 
 ```sh
 docker build -t stempeln:test .
-docker run --rm --network none -v "$PWD/tests:/app/tests:ro" --tmpfs /tmp -e STEMPELN_DATA_DIR=/tmp/data \
-  --entrypoint python stempeln:test -m unittest discover -s /app/tests -v
+docker run --rm --network none -v "$PWD/tests:/app/tests:ro" -v "$PWD/tools:/app/tools:ro" --tmpfs /tmp \
+  -e STEMPELN_DATA_DIR=/tmp/data --entrypoint python stempeln:test -m unittest discover -s /app/tests -v
 ```
+
+**Übersetzungen:** Deutsch ist die Quellsprache. Texte werden im Code mit `_()` (Templates/Meldungen) bzw. `N_()` (Konstanten) markiert; die englischen Texte stehen in `stempeln/translations/en.json`. `python tools/i18n_extract.py` zeigt fehlende Übersetzungen, `--update en` ergänzt neue Schlüssel und entfernt unbenutzte. Ein Test schlägt fehl, solange etwas fehlt. Für eine weitere Sprache eine neue JSON-Datei anlegen und sie in `stempeln/i18n.py` (`LANGUAGES`, Monats- und Wochentagsnamen) eintragen.
 
 Ein Tag `v*` baut das Multi-Arch-Image, veröffentlicht es auf `ghcr.io/partofthecurse/stempeln` und legt ein Release an.
 

@@ -5,30 +5,33 @@ from collections import OrderedDict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
+from . import i18n
+from .i18n import N_
 from .timecalc import to_local
 
-UNITS = OrderedDict([("HUR", ("Std.", "Stunden")), ("DAY", ("Tag", "Tage")), ("C62", ("Stk.", "Stück")), ("LS", ("pauschal", "Pauschal"))])
-POSITION_MODES = OrderedDict([("project", "Eine Position je Projekt"), ("day", "Eine Position je Projekt und Tag"), ("entry", "Eine Position je Eintrag")])
-VAT_MODES = OrderedDict([("standard", "Regelbesteuerung (mit Umsatzsteuer)"), ("small_business", "Kleinunternehmer (§ 19 UStG, ohne Umsatzsteuer)")])
+UNITS = OrderedDict([("HUR", (N_("Std."), N_("Stunden"))), ("DAY", (N_("Tag"), N_("Tage"))), ("C62", (N_("Stk."), N_("Stück"))), ("LS", (N_("pauschal"), N_("Pauschal")))])
+POSITION_MODES = OrderedDict([("project", N_("Eine Position je Projekt")), ("day", N_("Eine Position je Projekt und Tag")), ("entry", N_("Eine Position je Eintrag"))])
+VAT_MODES = OrderedDict([("standard", N_("Regelbesteuerung (mit Umsatzsteuer)")), ("small_business", N_("Kleinunternehmer (§ 19 UStG, ohne Umsatzsteuer)"))])
 CUSTOMER_TAX_MODES = OrderedDict([
-    ("domestic", "Inland – normale Umsatzsteuer"),
-    ("reverse_charge", "EU-Unternehmen – Reverse Charge (§ 13b UStG)"),
-    ("non_eu", "Drittland – nicht im Inland steuerbar (§ 3a UStG)"),
+    ("domestic", N_("Inland – normale Umsatzsteuer")),
+    ("reverse_charge", N_("EU-Unternehmen – Reverse Charge (§ 13b UStG)")),
+    ("non_eu", N_("Drittland – nicht im Inland steuerbar (§ 3a UStG)")),
 ])
-DAY_ROUNDING = OrderedDict([("exact", "Anteilig (Stunden ÷ Tageslänge)"), ("half", "Auf halbe Tage runden"), ("full", "Jeder Arbeitstag = 1 Tag")])
-BILLING_UNITS = OrderedDict([("hour", "Stundensatz"), ("day", "Tagessatz")])
-ROUNDING_CHOICES = OrderedDict([(0, "Minutengenau"), (6, "6 Minuten (0,1 h)"), (15, "Viertelstunde"), (30, "Halbe Stunde"), (60, "Volle Stunde")])
-STATUS_LABELS = {"draft": "Entwurf", "open": "Offen", "paid": "Bezahlt", "cancelled": "Storniert"}
+DAY_ROUNDING = OrderedDict([("exact", N_("Anteilig (Stunden ÷ Tageslänge)")), ("half", N_("Auf halbe Tage runden")), ("full", N_("Jeder Arbeitstag = 1 Tag"))])
+BILLING_UNITS = OrderedDict([("hour", N_("Stundensatz")), ("day", N_("Tagessatz"))])
+ROUNDING_CHOICES = OrderedDict([(0, N_("Minutengenau")), (6, N_("6 Minuten (0,1 h)")), (15, N_("Viertelstunde")), (30, N_("Halbe Stunde")), (60, N_("Volle Stunde"))])
+STATUS_LABELS = {"draft": N_("Entwurf"), "open": N_("Offen"), "paid": N_("Bezahlt"), "cancelled": N_("Storniert")}
 
 TAX_CATEGORIES = {
     # mode: (UNCL5305-Kategorie, Befreiungsgrund, VATEX-Code)
-    "small_business": ("E", "Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG.", None),
-    "reverse_charge": ("AE", "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge, § 13b UStG).", "VATEX-EU-AE"),
-    "non_eu": ("O", "Nicht im Inland steuerbare Leistung (§ 3a UStG).", "VATEX-EU-O"),
+    "small_business": ("E", N_("Kein Ausweis von Umsatzsteuer, da Kleinunternehmer gemäß § 19 UStG."), None),
+    "reverse_charge": ("AE", N_("Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge, § 13b UStG)."), "VATEX-EU-AE"),
+    "non_eu": ("O", N_("Nicht im Inland steuerbare Leistung (§ 3a UStG)."), "VATEX-EU-O"),
 }
 
-DEFAULT_INTRO = "Vielen Dank für Ihren Auftrag. Für meine Leistungen berechne ich Ihnen:"
-DEFAULT_FOOTER = "Bitte überweisen Sie den Rechnungsbetrag bis zum {faellig} unter Angabe der Rechnungsnummer {nummer}."
+DEFAULT_INTRO = N_("Vielen Dank für Ihren Auftrag. Für meine Leistungen berechne ich Ihnen:")
+DEFAULT_FOOTER = N_("Bitte überweisen Sie den Rechnungsbetrag bis zum {faellig} unter Angabe der Rechnungsnummer {nummer}.")
+DEFAULT_CLOSING = N_("Mit freundlichen Grüßen")
 
 CENT = Decimal("0.01")
 
@@ -41,20 +44,28 @@ def money(cents):
     return (Decimal(int(cents)) / 100).quantize(CENT)
 
 
-def fmt_quantity(value):
+def fmt_quantity(value, language=None):
     text = f"{dec(value).normalize():f}"
-    return text.replace(".", ",")
+    if "." in text:
+        whole, fraction = text.split(".")
+    else:
+        whole, fraction = text, ""
+    whole = i18n.fmt_number(int(whole), 0, language) if whole.lstrip("-").isdigit() else whole
+    separator = "." if (language or i18n.current()) == "en" else ","
+    return whole + (separator + fraction if fraction else "")
 
 
-def fmt_rate(value):
-    return fmt_quantity(dec(value)) + " %"
+def fmt_rate(value, language=None):
+    return fmt_quantity(dec(value), language) + " %"
 
 
-def unit_label(unit, quantity=1):
+def unit_label(unit, quantity=1, language=None):
     singular, plural = UNITS.get(unit, (unit, unit))
-    if unit == "DAY":
-        return singular if dec(quantity) == 1 else plural
-    return singular
+    one = dec(quantity) == 1
+    if (language or i18n.current()) == "en" and unit in ("HUR", "DAY"):
+        return {"HUR": "hr" if one else "hrs", "DAY": "day" if one else "days"}[unit]
+    label = (singular if one else plural) if unit == "DAY" else singular
+    return i18n.gettext(label, language)
 
 
 def line_cents(quantity, price_cents):
@@ -119,14 +130,14 @@ def valid_number_pattern(pattern):
     return bool(re.search(r"\{N+\}", pattern or "")) and len(pattern) <= 40 and re.fullmatch(r"[A-Za-z0-9{}/_.\-]+", pattern or "")
 
 
-def fill_placeholders(text, invoice, gross_cents, payment_days):
-    from .timecalc import fmt_money
+def fill_placeholders(text, invoice, gross_cents, payment_days, language=None):
     values = {
-        "{faellig}": invoice["due_date"].strftime("%d.%m.%Y") if invoice.get("due_date") else "",
+        "{faellig}": i18n.fmt_date(invoice["due_date"], language) if invoice.get("due_date") else "",
         "{nummer}": invoice.get("number") or "",
-        "{betrag}": fmt_money(gross_cents),
+        "{betrag}": i18n.fmt_money(gross_cents, language),
         "{tage}": str(payment_days),
     }
+    values.update({"{due}": values["{faellig}"], "{number}": values["{nummer}"], "{amount}": values["{betrag}"], "{days}": values["{tage}"]})
     for key, value in values.items():
         text = text.replace(key, value)
     return text
@@ -162,14 +173,14 @@ def _days(seconds_by_day, project):
     return total.quantize(CENT, ROUND_HALF_UP)
 
 
-def _span(days):
+def _span(days, language):
     first, last = min(days), max(days)
     if first == last:
-        return first.strftime("%d.%m.%Y")
-    return f"{first.strftime('%d.%m.')}–{last.strftime('%d.%m.%Y')}"
+        return i18n.fmt_date(first, language)
+    return f"{i18n.fmt_date(first, language, short=True)}–{i18n.fmt_date(last, language)}"
 
 
-def positions_from_entries(entries, projects, mode, rounding_minutes, default_vat):
+def positions_from_entries(entries, projects, mode, rounding_minutes, default_vat, language="de"):
     """entries: abgeschlossene Einträge mit project_id; projects: {id: project}."""
     by_project = OrderedDict()
     for entry in sorted(entries, key=lambda e: (projects[e["project_id"]]["name"].casefold(), e["start_at"])):
@@ -194,19 +205,21 @@ def positions_from_entries(entries, projects, mode, rounding_minutes, default_va
             else:
                 quantity = _hours(_round_seconds(sum(e["end_at"] - e["start_at"] for e in project_entries), rounding_minutes))
             count = len(per_day)
-            detail = f"{_span(list(per_day))} · {count} {'Arbeitstag' if count == 1 else 'Arbeitstage'}"
+            label = i18n.gettext(N_("Arbeitstag") if count == 1 else N_("Arbeitstage"), language)
+            label = label.lower() if language == "en" else label
+            detail = f"{_span(list(per_day), language)} · {count} {label}"
             add(project["name"], detail, quantity, unit, project)
         elif mode == "day" or is_day:
             for day, day_entries in per_day.items():
                 seconds = sum(e["end_at"] - e["start_at"] for e in day_entries)
                 quantity = _days([seconds], project) if is_day else _hours(_round_seconds(seconds, rounding_minutes))
                 notes = "; ".join(dict.fromkeys(e["note"] for e in day_entries if e["note"]))
-                add(f"{project['name']} – {day.strftime('%d.%m.%Y')}", notes, quantity, unit, project)
+                add(f"{project['name']} – {i18n.fmt_date(day, language)}", notes, quantity, unit, project)
         else:
             for entry in project_entries:
                 start, end = to_local(entry["start_at"]), to_local(entry["end_at"])
                 quantity = _hours(_round_seconds(entry["end_at"] - entry["start_at"], rounding_minutes))
-                description = f"{project['name']} – {start.strftime('%d.%m.%Y')} {start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
+                description = f"{project['name']} – {i18n.fmt_date(start, language)} {start.strftime('%H:%M')}–{end.strftime('%H:%M')}"
                 add(description, entry["note"], quantity, unit, project)
     return [item for item in items if item["quantity"] > 0]
 
@@ -215,21 +228,21 @@ def positions_from_entries(entries, projects, mode, rounding_minutes, default_va
 
 def seller_problems(settings):
     problems = []
-    for key, label in (("company", "Name bzw. Firma"), ("street", "Straße"), ("zip", "PLZ"), ("city", "Ort"), ("iban", "IBAN")):
+    for key, label in (("company", N_("Name bzw. Firma")), ("street", N_("Straße")), ("zip", N_("PLZ")), ("city", N_("Ort")), ("iban", "IBAN")):
         if not (settings.get(key) or "").strip():
             problems.append(label)
     if not (settings.get("tax_number") or settings.get("vat_id") or "").strip():
-        problems.append("Steuernummer oder USt-IdNr.")
+        problems.append(N_("Steuernummer oder USt-IdNr."))
     return problems
 
 
 def buyer_problems(customer, mode):
     problems = []
-    for key, label in (("name", "Name"), ("street", "Straße"), ("zip", "PLZ"), ("city", "Ort")):
+    for key, label in (("name", N_("Kunde: Name")), ("street", N_("Kunde: Straße")), ("zip", N_("Kunde: PLZ")), ("city", N_("Kunde: Ort"))):
         if not (customer.get(key) or "").strip():
-            problems.append(f"Kunde: {label}")
+            problems.append(label)
     if mode == "reverse_charge" and not (customer.get("vat_id") or "").strip():
-        problems.append("Kunde: USt-IdNr. (für Reverse Charge Pflicht)")
+        problems.append(N_("Kunde: USt-IdNr. (für Reverse Charge Pflicht)"))
     return problems
 
 
@@ -237,13 +250,13 @@ def xrechnung_problems(seller, buyer):
     """Zusätzliche Pflichtfelder der XRechnung (BR-DE-*) – nur für den XRechnung-Export."""
     problems = []
     if not (seller.get("contact_name") or "").strip():
-        problems.append("Ansprechpartner (Einstellungen)")
+        problems.append(N_("Ansprechpartner (Einstellungen)"))
     if not (seller.get("phone") or "").strip():
-        problems.append("Telefon (Einstellungen)")
+        problems.append(N_("Telefon (Einstellungen)"))
     if not (seller.get("email") or "").strip():
-        problems.append("E-Mail (Einstellungen)")
+        problems.append(N_("E-Mail (Einstellungen)"))
     if not (buyer.get("email") or "").strip():
-        problems.append("E-Mail des Kunden")
+        problems.append(N_("E-Mail des Kunden"))
     return problems
 
 
@@ -275,4 +288,4 @@ def project_amount(seconds, project):
 
 
 def rate_suffix(project):
-    return "/Tag" if (project or {}).get("billing_unit") == "day" else "/h"
+    return N_("/Tag") if (project or {}).get("billing_unit") == "day" else "/h"

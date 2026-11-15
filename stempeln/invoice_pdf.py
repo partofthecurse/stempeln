@@ -9,9 +9,8 @@ from fpdf.enums import OutputIntentSubType, XPos, YPos
 from fpdf.output import PDFICCProfile
 from PIL import ImageCms
 
-from . import billing
+from . import billing, i18n
 from .einvoice import build_cii
-from .timecalc import fmt_money
 
 FONT_DIR = Path(__file__).parent / "pdf_fonts"
 ACCENT = (47, 85, 201)
@@ -21,7 +20,7 @@ LINE = (220, 224, 232)
 LEFT, RIGHT = 20, 190
 WIDTH = RIGHT - LEFT
 
-TYPE_TITLES = {"380": "Rechnung", "381": "Stornorechnung"}
+TYPE_TITLES = {"380": i18n.N_("Rechnung"), "381": i18n.N_("Stornorechnung")}
 
 
 def _srgb_profile():
@@ -77,6 +76,7 @@ class InvoicePDF(FPDF):
     def __init__(self, doc, draft):
         super().__init__(format="A4", unit="mm", enforce_compliance="PDF/A-3B")
         self.doc, self.draft = doc, draft
+        self.language = doc.get("language") or "de"
         for style, weight in (("", "400"), ("B", "700")):
             self.add_font("DM", style, FONT_DIR / f"dmsans-latin-{weight}.ttf")
             self.add_font("DMX", style, FONT_DIR / f"dmsans-latin-ext-{weight}.ttf")
@@ -89,6 +89,9 @@ class InvoicePDF(FPDF):
         kwargs.setdefault("align", "L")
         return super().multi_cell(*args, **kwargs)
 
+    def t(self, text, **values):
+        return i18n.gettext(text, self.language, **values)
+
     def font(self, size, bold=False, color=INK):
         self.set_font("DM", "B" if bold else "", size)
         self.set_text_color(*color)
@@ -98,7 +101,7 @@ class InvoicePDF(FPDF):
         if self.draft:
             self.font(56, True, (236, 239, 246))
             with self.rotation(35, 105, 160):
-                self.text(38, 175, "ENTWURF")
+                self.text(38, 175, self.t("ENTWURF"))
         self.font(15, True, ACCENT)
         self.set_xy(LEFT, 16)
         self.cell(WIDTH, 7, seller.get("company") or "", align="R")
@@ -117,8 +120,8 @@ class InvoicePDF(FPDF):
         self.font(7.5, False, MUTED)
         columns = [
             [seller.get("company"), seller.get("street"), f"{seller.get('zip', '')} {seller.get('city', '')}".strip()],
-            [f"Steuernummer: {seller['tax_number']}" if seller.get("tax_number") else "",
-             f"USt-IdNr.: {seller['vat_id']}" if seller.get("vat_id") else "", seller.get("email")],
+            [self.t("Steuernummer: %(value)s", value=seller["tax_number"]) if seller.get("tax_number") else "",
+             self.t("USt-IdNr.: %(value)s", value=seller["vat_id"]) if seller.get("vat_id") else "", seller.get("email")],
             [seller.get("bank_name"), f"IBAN: {format_iban(seller.get('iban'))}" if seller.get("iban") else "",
              f"BIC: {seller['bic']}" if seller.get("bic") else ""],
         ]
@@ -126,7 +129,7 @@ class InvoicePDF(FPDF):
             self.set_xy(LEFT + index * WIDTH / 3, 274)
             self.multi_cell(WIDTH / 3 - 2, 3.6, "\n".join(line for line in column if line))
         self.set_xy(LEFT, 287)
-        self.cell(WIDTH, 4, f"Seite {self.page_no()}/{{nb}}", align="R")
+        self.cell(WIDTH, 4, self.t("Seite %(page)s", page=f"{self.page_no()}/{{nb}}"), align="R")
 
 
 def format_iban(iban):
@@ -136,9 +139,12 @@ def format_iban(iban):
 
 def _period(doc):
     first, last = doc.get("service_from"), doc.get("service_to")
+    language = doc.get("language")
     if not first or not last:
         return None
-    return first.strftime("%d.%m.%Y") if first == last else f"{first.strftime('%d.%m.%Y')} – {last.strftime('%d.%m.%Y')}"
+    if first == last:
+        return i18n.fmt_date(first, language)
+    return f"{i18n.fmt_date(first, language)} – {i18n.fmt_date(last, language)}"
 
 
 def render(doc, draft=False, timesheet=None, xml=None):
@@ -146,13 +152,24 @@ def render(doc, draft=False, timesheet=None, xml=None):
     seller, buyer = doc["seller"], doc["buyer"]
     summary = billing.totals(doc["items"], doc["tax_mode"])
     sign = -1 if doc["type_code"] == "381" else 1
-    title = f"{TYPE_TITLES[doc['type_code']]} {doc['number']}"
+    language = doc.get("language") or "de"
+
+    def t(text, **values):
+        return i18n.gettext(text, language, **values)
+
+    def money(cents):
+        return i18n.fmt_money(cents, language)
+
+    def day(value):
+        return i18n.fmt_date(value, language)
+
+    title = f"{t(TYPE_TITLES[doc['type_code']])} {doc['number'] if doc['number'] != 'Entwurf' else t('Entwurf')}"
     pdf = InvoicePDF(doc, draft)
     created = datetime.now(timezone.utc)
     pdf.set_creation_date(created)
     pdf.set_title(title)
     pdf.set_author(seller.get("company") or "Stempeln")
-    pdf.set_lang("de-DE")
+    pdf.set_lang("en-GB" if language == "en" else "de-DE")
     pdf.add_output_intent(OutputIntentSubType.PDFA, "sRGB IEC61966-2.1", "sRGB", "http://www.color.org",
                           PDFICCProfile(contents=_srgb_profile(), n=3, alternate="DeviceRGB"), "sRGB IEC61966-2.1")
     pdf.set_xmp_metadata(_xmp(title, seller.get("company") or "Stempeln", created))
@@ -176,20 +193,21 @@ def render(doc, draft=False, timesheet=None, xml=None):
     pdf.multi_cell(85, 5, "\n".join(line for line in address if line))
 
     # Infoblock rechts
-    info = [("Rechnungsnummer" if sign > 0 else "Stornonummer", doc["number"]),
-            ("Rechnungsdatum" if sign > 0 else "Datum", doc["issue_date"].strftime("%d.%m.%Y"))]
+    number = doc["number"] if doc["number"] != "Entwurf" else t("Entwurf")
+    info = [(t("Rechnungsnummer") if sign > 0 else t("Stornonummer"), number),
+            (t("Rechnungsdatum") if sign > 0 else t("Datum"), day(doc["issue_date"]))]
     if buyer.get("number"):
-        info.append(("Kundennummer", buyer["number"]))
+        info.append((t("Kundennummer"), buyer["number"]))
     if _period(doc):
-        info.append(("Leistungszeitraum", _period(doc)))
+        info.append((t("Leistungszeitraum"), _period(doc)))
     if doc.get("due_date") and sign > 0:
-        info.append(("Fällig am", doc["due_date"].strftime("%d.%m.%Y")))
+        info.append((t("Fällig am"), day(doc["due_date"])))
     if doc.get("preceding"):
-        info.append(("Zu Rechnung", f"{doc['preceding'][0]} vom {doc['preceding'][1].strftime('%d.%m.%Y')}"))
+        info.append((t("Zu Rechnung"), t("%(number)s vom %(date)s", number=doc["preceding"][0], date=day(doc["preceding"][1]))))
     if buyer.get("leitweg_id"):
-        info.append(("Leitweg-ID", buyer["leitweg_id"]))
+        info.append((t("Leitweg-ID"), buyer["leitweg_id"]))
     if buyer.get("vat_id"):
-        info.append(("USt-IdNr. Kunde", buyer["vat_id"]))
+        info.append((t("USt-IdNr. Kunde"), buyer["vat_id"]))
     y = 54
     for label, value in info:
         pdf.set_xy(122, y)
@@ -210,8 +228,8 @@ def render(doc, draft=False, timesheet=None, xml=None):
 
     # Positionen
     multi_rate = len({str(item["vat_rate"]) for item in doc["items"]}) > 1 and doc["tax_mode"] == "standard"
-    columns = [("Pos.", 11, "L"), ("Beschreibung", 79 if multi_rate else 92, "L"), ("Menge", 20, "R"),
-               ("Einzelpreis", 24, "R")] + ([("USt.", 13, "R")] if multi_rate else []) + [("Gesamt", 23, "R")]
+    columns = [(t("Pos."), 11, "L"), (t("Beschreibung"), 79 if multi_rate else 92, "L"), (t("Menge"), 20, "R"),
+               (t("Einzelpreis"), 24, "R")] + ([(t("USt."), 13, "R")] if multi_rate else []) + [(t("Gesamt"), 23, "R")]
 
     def table_header():
         pdf.font(8, True, MUTED)
@@ -246,9 +264,9 @@ def render(doc, draft=False, timesheet=None, xml=None):
             pdf.font(8, False, MUTED)
             pdf.multi_cell(description_width, 4, item["detail"])
         x += description_width
-        quantity = f"{billing.fmt_quantity(item['quantity'])} {billing.unit_label(item['unit'], item['quantity'])}"
-        values = [quantity, fmt_money(item["price_cents"])] + ([billing.fmt_rate(item["vat_rate"])] if multi_rate else []) \
-            + [fmt_money(sign * item["line_cents"])]
+        quantity = f"{billing.fmt_quantity(item['quantity'], language)} {billing.unit_label(item['unit'], item['quantity'], language)}"
+        values = [quantity, money(item["price_cents"])] + ([billing.fmt_rate(item["vat_rate"], language)] if multi_rate else []) \
+            + [money(sign * item["line_cents"])]
         pdf.font(9.5)
         for (label, width, align), value in zip(columns[2:], values):
             pdf.set_xy(x, top)
@@ -258,10 +276,11 @@ def render(doc, draft=False, timesheet=None, xml=None):
         pdf.line(LEFT, pdf.get_y(), RIGHT, pdf.get_y())
 
     # Summen
-    rows = [("Summe netto", summary["net"])] if doc["tax_mode"] == "standard" else []
+    rows = [(t("Summe netto"), summary["net"])] if doc["tax_mode"] == "standard" else []
     for group in summary["groups"]:
         if doc["tax_mode"] == "standard":
-            rows.append((f"Umsatzsteuer {billing.fmt_rate(group['rate'])} auf {fmt_money(sign * group['basis'])}", group["tax"]))
+            rows.append((t("Umsatzsteuer %(rate)s auf %(basis)s", rate=billing.fmt_rate(group["rate"], language),
+                           basis=money(sign * group["basis"])), group["tax"]))
     if pdf.get_y() + 12 + len(rows) * 6 > 297 - 34:
         pdf.add_page()
     pdf.ln(3)
@@ -270,19 +289,19 @@ def render(doc, draft=False, timesheet=None, xml=None):
         pdf.set_x(100)
         pdf.cell(65, 6, label, align="R")
         pdf.font(9.5)
-        pdf.cell(25, 6, fmt_money(sign * cents), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(25, 6, money(sign * cents), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_draw_color(*ACCENT)
     pdf.line(110, pdf.get_y() + 1, RIGHT, pdf.get_y() + 1)
     pdf.ln(2.5)
     pdf.set_x(100)
     pdf.font(11, True)
-    pdf.cell(65, 7, "Gesamtbetrag" if doc["tax_mode"] != "standard" else "Rechnungsbetrag", align="R")
+    pdf.cell(65, 7, t("Gesamtbetrag") if doc["tax_mode"] != "standard" else t("Rechnungsbetrag"), align="R")
     pdf.font(11, True, ACCENT)
-    pdf.cell(25, 7, fmt_money(sign * summary["gross"]), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(25, 7, money(sign * summary["gross"]), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_draw_color(*LINE)
     pdf.ln(6)
 
-    notes = [group["reason"] for group in summary["groups"] if group["reason"]]
+    notes = [t(group["reason"]) for group in summary["groups"] if group["reason"]]
     if doc.get("footer"):
         notes.append(doc["footer"])
     pdf.font(9.5)
@@ -296,11 +315,11 @@ def render(doc, draft=False, timesheet=None, xml=None):
     if timesheet:
         pdf.add_page()
         pdf.font(14, True)
-        pdf.cell(WIDTH, 8, "Leistungsnachweis", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(WIDTH, 8, t("Leistungsnachweis"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.font(8.5, False, MUTED)
-        pdf.cell(WIDTH, 5, f"Anlage zu {title}" + (f" · {_period(doc)}" if _period(doc) else ""), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.cell(WIDTH, 5, t("Anlage zu %(title)s", title=title) + (f" · {_period(doc)}" if _period(doc) else ""), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(3)
-        sheet_columns = [("Datum", 22, "L"), ("Zeit", 24, "L"), ("Dauer", 16, "R"), ("Projekt", 40, "L"), ("Tätigkeit", 68, "L")]
+        sheet_columns = [(t("Datum"), 22, "L"), (t("Zeit"), 24, "L"), (t("Dauer"), 16, "R"), (t("Projekt"), 40, "L"), (t("Tätigkeit"), 68, "L")]
 
         def sheet_header():
             pdf.font(8, True, MUTED)
@@ -332,7 +351,7 @@ def render(doc, draft=False, timesheet=None, xml=None):
         pdf.ln(2)
         pdf.font(9, True)
         hours, minutes = divmod(round(total / 60), 60)
-        pdf.cell(62, 6, f"Summe {hours}:{minutes:02d} h", align="R")
+        pdf.cell(62, 6, t("Summe %(time)s h", time=f"{hours}:{minutes:02d}"), align="R")
 
     if xml is not None:
         pdf.embed_file(bytes=xml, basename="factur-x.xml", mime_type="text/xml", desc="Factur-X/ZUGFeRD Rechnung",

@@ -180,6 +180,20 @@ class InvoiceFlowTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/rechnungen/{invoice_id}").status_code, 404)
         self.assertEqual(self.client.get(f"/rechnungen/{invoice_id}/pdf").status_code, 404)
 
+    def test_english_invoice_pdf(self):
+        self.enable()
+        with self.store.connect() as connection:
+            connection.execute("UPDATE customers SET language = 'en'")
+            connection.execute("UPDATE invoice_settings SET intro = NULL, footer = NULL")
+        invoice_id = self.draft()
+        self.assertIn("by ", self.store.invoice(1, invoice_id)["footer"])
+        self.assertTrue(self.store.invoice(1, invoice_id)["intro"].startswith("Thank you"))
+        self.client.post(f"/rechnungen/{invoice_id}", data={"action": "finalize"})
+        pdf = self.client.get(f"/rechnungen/{invoice_id}/pdf").data
+        self.assertTrue(pdf.startswith(b"%PDF") and b"en-GB" in pdf)
+        xml = self.client.get(f"/rechnungen/{invoice_id}/zugferd.xml").data.decode()
+        self.assertIn("Payable by", xml)
+
     def test_small_business_and_reverse_charge(self):
         self.enable()
         settings = self.store.invoice_settings(1)

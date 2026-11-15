@@ -264,3 +264,4 @@ code{font-size:.9em;background:var(--soft);padding:1px 5px;border-radius:4px;ove
 .entry-table{margin-top:12px;font-size:13px}
 details summary{list-style-position:inside}
 @media(max-width:700px){.invoice-table th:nth-child(3),.invoice-table td:nth-child(3){display:none}.invoice-items th:nth-child(5),.invoice-items td:nth-child(5){display:none}.recalc-form{flex-wrap:wrap}}
+.language-toggle{font-size:12px;font-weight:700;letter-spacing:.04em}

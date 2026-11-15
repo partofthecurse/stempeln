@@ -1,61 +1,61 @@
 {% extends 'base.html' %}
-{% block title %}Rechnungen{% endblock %}
+{% block title %}{{ _('Rechnungen') }}{% endblock %}
 {% block content %}
 <div class="page-heading split">
-  <div><span class="eyebrow">RECHNUNGEN</span><h1>Rechnungen<span class="accent">.</span></h1><p>{{ open_total | money }} offen · {{ paid_year | money }} dieses Jahr bezahlt</p></div>
+  <div><span class="eyebrow">{{ _('RECHNUNGEN') }}</span><h1>{{ _('Rechnungen') }}<span class="accent">.</span></h1><p>{{ open_total | money }} {{ _('offen ·') }} {{ paid_year | money }} {{ _('dieses Jahr bezahlt') }}</p></div>
   <div class="heading-actions">
-    {% if years %}<form method="get" class="filter-form"><select name="jahr" aria-label="Jahr" data-autosubmit><option value="">Alle Jahre</option>{% for y in years %}<option value="{{ y }}" {% if year and y | int == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select><noscript><button class="secondary-button" type="submit">Filtern</button></noscript></form>{% endif %}
-    <a class="secondary-button" href="{{ url_for('invoicing.customers') }}">Kunden</a>
-    <a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">Einstellungen</a>
+    {% if years %}<form method="get" class="filter-form"><select name="jahr" aria-label="{{ _('Jahr') }}" data-autosubmit><option value="">{{ _('Alle Jahre') }}</option>{% for y in years %}<option value="{{ y }}" {% if year and y | int == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select><noscript><button class="secondary-button" type="submit">{{ _('Filtern') }}</button></noscript></form>{% endif %}
+    <a class="secondary-button" href="{{ url_for('invoicing.customers') }}">{{ _('Kunden') }}</a>
+    <a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">{{ _('Einstellungen') }}</a>
   </div>
 </div>
 
-{% if problems %}<p class="notice error">Bevor du Rechnungen abschließen kannst, fehlen in den <a href="{{ url_for('invoicing.invoice_settings') }}">Einstellungen</a> noch: {{ problems | join(', ') }}.</p>{% endif %}
+{% if problems %}<p class="notice error">{{ _('Bevor du Rechnungen abschließen kannst, fehlen in den') }} <a href="{{ url_for('invoicing.invoice_settings') }}">{{ _('Einstellungen') }}</a> {{ _('noch:') }} {{ problems | join(', ') }}.</p>{% endif %}
 
 <div class="times-layout">
   <div class="stack">
     {% if unbilled %}
     <section class="card">
-      <div class="section-heading"><span class="section-label">NOCH NICHT ABGERECHNET</span></div>
+      <div class="section-heading"><span class="section-label">{{ _('NOCH NICHT ABGERECHNET') }}</span></div>
       <table class="month-table">
-        <thead><tr><th>Kunde</th><th>Zeitraum</th><th class="num">Stunden</th><th class="num">Wert</th></tr></thead>
+        <thead><tr><th>{{ _('Kunde') }}</th><th>{{ _('Zeitraum') }}</th><th class="num">{{ _('Stunden') }}</th><th class="num">{{ _('Wert') }}</th></tr></thead>
         <tbody>{% for row in unbilled %}
-          <tr><td><strong>{{ row.name }}</strong></td><td class="muted">{{ row.first.strftime('%d.%m.') }}–{{ row.last.strftime('%d.%m.%Y') }}</td><td class="num">{{ row.seconds | duration }} h</td><td class="num">{{ row.amount | money if row.amount else '–' }}</td></tr>
+          <tr><td><strong>{{ row.name }}</strong></td><td class="muted">{{ (row.first | dayshort) }}–{{ (row.last | day) }}</td><td class="num">{{ row.seconds | duration }} h</td><td class="num">{{ row.amount | money if row.amount else '–' }}</td></tr>
         {% endfor %}</tbody>
       </table>
-      <p class="hint">Zeiten zählen, wenn das Projekt einem Kunden zugeordnet ist. Ohne Kunde bitte unter <a class="text-link" href="{{ url_for('projects') }}">Projekte</a> zuordnen.</p>
+      <p class="hint">{{ _('Zeiten zählen, wenn das Projekt einem Kunden zugeordnet ist. Ohne Kunde bitte unter') }} <a class="text-link" href="{{ url_for('projects') }}">{{ _('Projekte') }}</a> {{ _('zuordnen.') }}</p>
     </section>
     {% endif %}
     <section class="card">
       <table class="month-table invoice-table">
-        <thead><tr><th>Nummer</th><th>Kunde</th><th>Datum</th><th class="num">Brutto</th><th>Status</th></tr></thead>
+        <thead><tr><th>{{ _('Nummer') }}</th><th>{{ _('Kunde') }}</th><th>{{ _('Datum') }}</th><th class="num">{{ _('Brutto') }}</th><th>{{ _('Status') }}</th></tr></thead>
         <tbody>
         {% for inv in invoices %}
         <tr class="{% if inv.status == 'cancelled' %}is-off{% endif %}">
-          <td><a class="text-link" href="{{ url_for('invoicing.invoice', invoice_id=inv.id) }}">{{ inv.number or 'Entwurf' }}</a>{% if inv.type_code == '381' %} <span class="tag">Storno</span>{% endif %}</td>
+          <td><a class="text-link" href="{{ url_for('invoicing.invoice', invoice_id=inv.id) }}">{{ inv.number or _('Entwurf') }}</a>{% if inv.type_code == '381' %} <span class="tag">{{ _('Storno') }}</span>{% endif %}</td>
           <td>{{ inv.customer_name or '–' }}</td>
           <td class="muted">{{ inv.issue_date[8:10] }}.{{ inv.issue_date[5:7] }}.{{ inv.issue_date[:4] }}</td>
           <td class="num">{% if inv.status == 'draft' %}<span class="muted">–</span>{% else %}{{ ((-1 if inv.type_code == '381' else 1) * inv.gross_cents) | money }}{% endif %}</td>
-          <td>{% if inv.type_code == '381' %}<span class="status-tag">–</span>{% else %}<span class="status-tag status-{{ inv.status }}{% if inv.overdue %} status-overdue{% endif %}">{{ 'Überfällig' if inv.overdue else STATUS_LABELS[inv.status] }}</span>{% endif %}</td>
+          <td>{% if inv.type_code == '381' %}<span class="status-tag">–</span>{% else %}<span class="status-tag status-{{ inv.status }}{% if inv.overdue %} status-overdue{% endif %}">{{ _('Überfällig') if inv.overdue else STATUS_LABELS[inv.status] }}</span>{% endif %}</td>
         </tr>
-        {% else %}<tr><td colspan="5" class="muted">Noch keine Rechnungen. Leg rechts die erste an.</td></tr>{% endfor %}
+        {% else %}<tr><td colspan="5" class="muted">{{ _('Noch keine Rechnungen. Leg rechts die erste an.') }}</td></tr>{% endfor %}
         </tbody>
       </table>
     </section>
   </div>
   <section class="card sticky">
-    <span class="section-label">NEUE RECHNUNG</span><h2>Aus erfassten Zeiten</h2>
+    <span class="section-label">{{ _('NEUE RECHNUNG') }}</span><h2>{{ _('Aus erfassten Zeiten') }}</h2>
     {% if customers %}
     <form method="post" action="{{ url_for('invoicing.create_invoice') }}" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Kunde<select name="customer_id" required>{% for c in customers %}<option value="{{ c.id }}">{{ c.name }}{% if c.number %} · {{ c.number }}{% endif %}</option>{% endfor %}</select></label>
-      <div class="field-row"><label>Von<input type="date" name="from" value="{{ default_from }}" required></label><label>Bis<input type="date" name="to" value="{{ default_to }}" required></label></div>
-      <label>Positionen<select name="mode">{% for key, label in POSITION_MODES.items() %}<option value="{{ key }}" {% if settings.position_mode == key %}selected{% endif %}>{{ label }}</option>{% endfor %}<option value="empty">Leere Rechnung (Positionen selbst eintragen)</option></select></label>
-      <button class="primary-button" type="submit">Entwurf erstellen <span>→</span></button>
+      <label>{{ _('Kunde') }}<select name="customer_id" required>{% for c in customers %}<option value="{{ c.id }}">{{ c.name }}{% if c.number %} · {{ c.number }}{% endif %}</option>{% endfor %}</select></label>
+      <div class="field-row"><label>{{ _('Von') }}<input type="date" name="from" value="{{ default_from }}" required></label><label>{{ _('Bis') }}<input type="date" name="to" value="{{ default_to }}" required></label></div>
+      <label>{{ _('Positionen') }}<select name="mode">{% for key, label in POSITION_MODES.items() %}<option value="{{ key }}" {% if settings.position_mode == key %}selected{% endif %}>{{ label }}</option>{% endfor %}<option value="empty">{{ _('Leere Rechnung (Positionen selbst eintragen)') }}</option></select></label>
+      <button class="primary-button" type="submit">{{ _('Entwurf erstellen') }} <span>→</span></button>
     </form>
-    <p class="hint">Es werden nur abgeschlossene, noch nicht abgerechnete Zeiten der Projekte dieses Kunden übernommen. Im Entwurf kannst du alles anpassen; erst beim Abschließen wird die Nummer vergeben.</p>
+    <p class="hint">{{ _('Es werden nur abgeschlossene, noch nicht abgerechnete Zeiten der Projekte dieses Kunden übernommen. Im Entwurf kannst du alles anpassen; erst beim Abschließen wird die Nummer vergeben.') }}</p>
     {% else %}
-    <p>Leg zuerst einen <a class="text-link" href="{{ url_for('invoicing.customers') }}">Kunden</a> an und ordne ihm unter Projekte deine Projekte zu.</p>
+    <p>{{ _('Leg zuerst einen') }} <a class="text-link" href="{{ url_for('invoicing.customers') }}">{{ _('Kunden') }}</a> {{ _('an und ordne ihm unter Projekte deine Projekte zu.') }}</p>
     {% endif %}
   </section>
 </div>

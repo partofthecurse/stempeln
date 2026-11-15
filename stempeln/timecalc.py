@@ -8,14 +8,15 @@ from zoneinfo import ZoneInfo
 
 import holidays
 
+from . import i18n
+
 REGIONS = {
-    "": "Nur bundesweite Feiertage", "BW": "Baden-Württemberg", "BY": "Bayern", "BE": "Berlin",
+    "": i18n.N_("Nur bundesweite Feiertage"), "BW": "Baden-Württemberg", "BY": "Bayern", "BE": "Berlin",
     "BB": "Brandenburg", "HB": "Bremen", "HH": "Hamburg", "HE": "Hessen", "MV": "Mecklenburg-Vorpommern",
     "NI": "Niedersachsen", "NW": "Nordrhein-Westfalen", "RP": "Rheinland-Pfalz", "SL": "Saarland",
     "SN": "Sachsen", "ST": "Sachsen-Anhalt", "SH": "Schleswig-Holstein", "TH": "Thüringen",
 }
-WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
-ABSENCE_LABELS = {"vacation": "Urlaub", "sick": "Krank", "other": "Frei"}
+ABSENCE_LABELS = {"vacation": i18n.N_("Urlaub"), "sick": i18n.N_("Krank"), "other": i18n.N_("Frei")}
 MIN_BREAK_GAP = 15 * 60
 
 
@@ -44,12 +45,12 @@ def parse_local(day_text, time_text):
 
 
 @lru_cache(maxsize=64)
-def holiday_calendar(region, year):
-    return dict(holidays.country_holidays("DE", subdiv=region or None, years=year, language="de"))
+def holiday_calendar(region, year, language="de"):
+    return dict(holidays.country_holidays("DE", subdiv=region or None, years=year, language="en_US" if language == "en" else "de"))
 
 
 def holiday_name(region, day):
-    return holiday_calendar(region, day.year).get(day)
+    return holiday_calendar(region, day.year, i18n.current()).get(day)
 
 
 def required_break_net(worked, gaps):
@@ -97,7 +98,7 @@ def day_report(profile, day, entries, absence=None, now=None):
     target = target_seconds(profile, day, absence)
     return {
         "day": day,
-        "weekday": WEEKDAYS[day.weekday()],
+        "weekday": i18n.WEEKDAYS[i18n.current()][day.weekday()],
         "segments": segments,
         "worked": worked,
         "breaks": gaps,
@@ -178,10 +179,8 @@ def project_totals(reports):
     return totals
 
 
-def fmt_money(cents):
-    cents = int(round(cents))
-    euros, rest = divmod(abs(cents), 100)
-    return ("-" if cents < 0 else "") + f"{euros:,}".replace(",", ".") + f",{rest:02d} €"
+def fmt_money(cents, language=None):
+    return i18n.fmt_money(cents, language)
 
 
 def amount_cents(seconds, rate_cents):

@@ -13,7 +13,8 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 
-from . import billing, einvoice, invoice_pdf
+from . import billing, einvoice, i18n, invoice_pdf
+from .i18n import gettext as _
 from .timecalc import day_bounds, fmt_duration, to_local, today
 
 bp = Blueprint("invoicing", __name__)
@@ -28,7 +29,7 @@ def invoicing_required(view):
     @login_required
     def wrapped(*args, **kwargs):
         if not store().invoice_settings(current_user.uid)["enabled"]:
-            flash("Rechnungen sind ausgeschaltet. Du kannst sie unter Konto aktivieren.", "error")
+            flash(_("Rechnungen sind ausgeschaltet. Du kannst sie unter Konto aktivieren."), "error")
             return redirect(url_for("account"))
         return view(*args, **kwargs)
     return wrapped
@@ -89,13 +90,14 @@ def build_doc(invoice, items=None, settings=None, customer=None):
         "service_from": billing.as_date(invoice["service_from"]), "service_to": billing.as_date(invoice["service_to"]),
         "buyer_reference": invoice["buyer_reference"], "notes": [], "preceding": preceding,
         "seller": seller, "buyer": buyer, "items": items, "tax_mode": mode,
-        "intro": invoice["intro"], "closing": invoice["closing"],
+        "intro": invoice["intro"], "closing": invoice["closing"], "language": invoice["language"],
     }
+    language = invoice["language"]
     days = (doc["due_date"] - doc["issue_date"]).days if doc["due_date"] else 0
-    doc["footer"] = billing.fill_placeholders(invoice["footer"], doc, summary["gross"], days)
-    doc["intro"] = billing.fill_placeholders(invoice["intro"], doc, summary["gross"], days)
+    doc["footer"] = billing.fill_placeholders(invoice["footer"], doc, summary["gross"], days, language)
+    doc["intro"] = billing.fill_placeholders(invoice["intro"], doc, summary["gross"], days, language)
     if invoice["type_code"] == "380" and doc["due_date"]:
-        doc["payment_terms"] = f"Zahlbar bis {doc['due_date'].strftime('%d.%m.%Y')} ohne Abzug."
+        doc["payment_terms"] = _("Zahlbar bis %(date)s ohne Abzug.", language, date=i18n.fmt_date(doc["due_date"], language))
     doc["notes"] = [note for note in (doc["intro"], doc["footer"]) if note]
     return doc, summary
 
@@ -105,7 +107,7 @@ def timesheet_rows(invoice):
     for entry in store().invoice_entries(invoice["id"]):
         start, end = to_local(entry["start_at"]), to_local(entry["end_at"])
         seconds = entry["end_at"] - entry["start_at"]
-        rows.append({"day": start.strftime("%d.%m.%Y"), "time": f"{start:%H:%M}–{end:%H:%M}", "duration": fmt_duration(seconds),
+        rows.append({"day": i18n.fmt_date(start, invoice["language"]), "time": f"{start:%H:%M}–{end:%H:%M}", "duration": fmt_duration(seconds),
                      "project": entry["project_name"] or "", "note": entry["note"], "seconds": seconds})
     return rows
 
@@ -123,12 +125,12 @@ def renumber(connection, invoice_id):
 
 def collect_positions(connection, invoice, mode, settings):
     """Hängt offene Zeiten des Kunden im Leistungszeitraum an den Entwurf und erzeugt Positionen."""
-    start, _ = day_bounds(billing.as_date(invoice["service_from"]))
+    start, _ignored = day_bounds(billing.as_date(invoice["service_from"]))
     _, end = day_bounds(billing.as_date(invoice["service_to"]))
     entries = store().unbilled_entries(current_user.uid, invoice["customer_id"], start, end, connection)
     projects = {project["id"]: project for project in store().projects(current_user.uid)}
     default_vat = "0" if settings["vat_mode"] == "small_business" else settings["default_vat_rate"]
-    positions = billing.positions_from_entries(entries, projects, mode, settings["rounding_minutes"], default_vat)
+    positions = billing.positions_from_entries(entries, projects, mode, settings["rounding_minutes"], default_vat, invoice["language"])
     connection.executemany("UPDATE entries SET invoice_id = ? WHERE id = ? AND invoice_id IS NULL",
                            [(invoice["id"], entry["id"]) for entry in entries])
     offset = connection.execute("SELECT COALESCE(MAX(position), 0) FROM invoice_items WHERE invoice_id = ?", (invoice["id"],)).fetchone()[0]
@@ -179,7 +181,7 @@ def finalize(invoice_id):
         if summary["gross"] <= 0:
             problems.append("ein Rechnungsbetrag größer 0 €")
         if problems:
-            flash("Für den Abschluss fehlt noch: " + ", ".join(problems) + ".", "error")
+            flash(_("Für den Abschluss fehlt noch: %(fields)s.", fields=", ".join(_(problem) for problem in problems)), "error")
             return None
         issue_day = billing.as_date(invoice["issue_date"])
         number = next_number(connection, settings, issue_day)
@@ -187,9 +189,9 @@ def finalize(invoice_id):
         due = None if invoice["type_code"] == "381" else (billing.as_date(invoice["due_date"]) or issue_day + timedelta(days=days))
         invoice.update(number=number, status="open", seller_json=json.dumps(seller), buyer_json=json.dumps(buyer),
                        tax_mode=mode, due_date=due.isoformat() if due else None)
-        doc, _ = build_doc(invoice, [dict(item, quantity=str(item["quantity"]), vat_rate=str(item["vat_rate"])) for item in items])
+        doc, _ignored = build_doc(invoice, [dict(item, quantity=str(item["quantity"]), vat_rate=str(item["vat_rate"])) for item in items])
         sheet = timesheet_rows(invoice) if invoice["timesheet"] else None
-        pdf, _ = invoice_pdf.render_final(doc, sheet)
+        pdf, _ignored = invoice_pdf.render_final(doc, sheet)
         written = archive_dir(current_user.uid) / f"{safe_filename(number)}.pdf"
         try:
             with open(written, "xb") as handle:
@@ -252,7 +254,7 @@ def invoices():
         "invoices.html", invoices=rows, years=years, year=year, unbilled=unbilled, open_total=open_total, paid_year=paid_year,
         customers=store().customers(current_user.uid, include_archived=False), settings=settings,
         default_from=last_month_end.replace(day=1).isoformat(), default_to=last_month_end.isoformat(),
-        problems=billing.seller_problems(settings), STATUS_LABELS=billing.STATUS_LABELS, POSITION_MODES=billing.POSITION_MODES,
+        problems=[_(problem) for problem in billing.seller_problems(settings)],
     )
 
 
@@ -263,27 +265,34 @@ def create_invoice():
     first, last = parse_day(request.form.get("from")), parse_day(request.form.get("to"))
     mode = request.form.get("mode", "project")
     if not customer or not first or not last or last < first or mode not in (*billing.POSITION_MODES, "empty"):
-        flash("Bitte Kunde und einen gültigen Leistungszeitraum wählen.", "error")
+        flash(_("Bitte Kunde und einen gültigen Leistungszeitraum wählen."), "error")
         return redirect(url_for("invoicing.invoices"))
     settings = store().invoice_settings(current_user.uid)
+    language = customer.get("language") or "de"
+
+    def text(value, default):
+        # Unveränderte Standardtexte werden in die Rechnungssprache übersetzt, eigene Texte bleiben wie sie sind
+        value = value or default
+        return _(value, language) if value in (default, billing.DEFAULT_CLOSING) else value
+
     with store().connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         invoice_id = connection.execute(
             "INSERT INTO invoices (user_id, customer_id, issue_date, service_from, service_to, buyer_reference, intro, footer, closing, "
-            "timesheet, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "timesheet, language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (current_user.uid, customer["id"], today().isoformat(), first.isoformat(), last.isoformat(), customer["leitweg_id"],
-             settings["intro"] if settings["intro"] is not None else billing.DEFAULT_INTRO,
-             settings["footer"] if settings["footer"] is not None else billing.DEFAULT_FOOTER,
-             settings["closing"], 0 if mode == "empty" else settings["timesheet"], int(time.time()))).lastrowid
+             text(settings["intro"], billing.DEFAULT_INTRO), text(settings["footer"], billing.DEFAULT_FOOTER),
+             text(settings["closing"], billing.DEFAULT_CLOSING), 0 if mode == "empty" else settings["timesheet"], language,
+             int(time.time()))).lastrowid
         invoice = dict(connection.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)).fetchone())
         if mode != "empty":
             entries, positions = collect_positions(connection, invoice, mode, settings)
             if not entries:
                 connection.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-                flash(f"Für {customer['name']} gibt es im Zeitraum keine offenen Zeiten. Tipp: „Leere Rechnung“ für Pauschalen.", "error")
+                flash(_("Für %(name)s gibt es im Zeitraum keine offenen Zeiten. Tipp: „Leere Rechnung“ für Pauschalen.", name=customer["name"]), "error")
                 return redirect(url_for("invoicing.invoices"))
             if any(not item["price_cents"] for item in positions):
-                flash("Mindestens ein Projekt hat keinen Stunden- bzw. Tagessatz – bitte den Preis in den Positionen ergänzen.", "error")
+                flash(_("Mindestens ein Projekt hat keinen Stunden- bzw. Tagessatz – bitte den Preis in den Positionen ergänzen."), "error")
     return redirect(url_for("invoicing.invoice", invoice_id=invoice_id))
 
 
@@ -302,7 +311,7 @@ def invoice(invoice_id):
             issue, first, last = (parse_day(request.form.get(key)) for key in ("issue_date", "service_from", "service_to"))
             due = parse_day(request.form.get("due_date"))
             if not issue or (first and last and last < first) or (due and due < issue):
-                flash("Bitte die Datumsangaben prüfen.", "error")
+                flash(_("Bitte die Datumsangaben prüfen."), "error")
             else:
                 with store().connect() as connection:
                     connection.execute(
@@ -312,7 +321,7 @@ def invoice(invoice_id):
                          due.isoformat() if due else None, clean(request.form.get("buyer_reference"), 100),
                          request.form.get("intro", "").strip()[:2000], request.form.get("footer", "").strip()[:2000],
                          request.form.get("closing", "").strip()[:300], 1 if request.form.get("timesheet") else 0, invoice_id))
-                flash("Rechnungsdaten gespeichert.", "success")
+                flash(_("Rechnungsdaten gespeichert."), "success")
         elif action in ("item", "add"):
             description = clean(request.form.get("description"))
             quantity = billing.parse_quantity(request.form.get("quantity"))
@@ -320,7 +329,7 @@ def invoice(invoice_id):
             unit = request.form.get("unit")
             rate = Decimal(0) if settings["vat_mode"] == "small_business" else billing.parse_rate(request.form.get("vat_rate"))
             if not description or quantity is None or quantity <= 0 or price is None or price < 0 or unit not in billing.UNITS or rate is None:
-                flash("Bitte Beschreibung, Menge (> 0), Einheit, Preis und Steuersatz prüfen.", "error")
+                flash(_("Bitte Beschreibung, Menge (> 0), Einheit, Preis und Steuersatz prüfen."), "error")
             else:
                 values = (description, request.form.get("detail", "").strip()[:1000], str(quantity), unit, price, str(rate),
                           billing.line_cents(quantity, price))
@@ -333,7 +342,7 @@ def invoice(invoice_id):
                         connection.execute("UPDATE invoice_items SET description = ?, detail = ?, quantity = ?, unit = ?, price_cents = ?, "
                                            "vat_rate = ?, line_cents = ? WHERE id = ? AND invoice_id = ?",
                                            (*values, request.form.get("item_id", type=int), invoice_id))
-                flash("Position gespeichert.", "success")
+                flash(_("Position gespeichert."), "success")
         elif action == "delete-item":
             with store().connect() as connection:
                 connection.execute("DELETE FROM invoice_items WHERE id = ? AND invoice_id = ?", (request.form.get("item_id", type=int), invoice_id))
@@ -350,24 +359,24 @@ def invoice(invoice_id):
         elif action == "recalc":
             mode = request.form.get("mode", settings["position_mode"])
             if mode not in billing.POSITION_MODES or not invoice["service_from"] or not invoice["service_to"]:
-                flash("Für die Neuberechnung braucht der Entwurf einen Leistungszeitraum.", "error")
+                flash(_("Für die Neuberechnung braucht der Entwurf einen Leistungszeitraum."), "error")
             else:
                 with store().connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     connection.execute("UPDATE entries SET invoice_id = NULL WHERE invoice_id = ?", (invoice_id,))
                     connection.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (invoice_id,))
-                    entries, _ = collect_positions(connection, invoice, mode, settings)
-                flash(f"Positionen aus {len(entries)} Einträgen neu berechnet.", "success")
+                    entries, _ignored = collect_positions(connection, invoice, mode, settings)
+                flash(_("Positionen aus %(count)s Einträgen neu berechnet.", count=len(entries)), "success")
         elif action == "delete" and invoice["status"] == "draft":
             with store().connect() as connection:
                 connection.execute("UPDATE entries SET invoice_id = NULL WHERE invoice_id = ?", (invoice_id,))
                 connection.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
-            flash("Entwurf gelöscht. Die Zeiten sind wieder offen.", "success")
+            flash(_("Entwurf gelöscht. Die Zeiten sind wieder offen."), "success")
             return redirect(url_for("invoicing.invoices"))
         elif action == "finalize":
             number = finalize(invoice_id)
             if number:
-                flash(f"Rechnung {number} abgeschlossen und archiviert.", "success")
+                flash(_("Rechnung %(number)s abgeschlossen und archiviert.", number=number), "success")
         elif action == "paid" and invoice["status"] in ("open", "paid") and invoice["type_code"] == "380":
             paid_on = parse_day(request.form.get("paid_on")) or today()
             with store().connect() as connection:
@@ -395,29 +404,29 @@ def invoice(invoice_id):
     return render_template(
         "invoice.html", invoice=invoice, items=item_dicts(items), doc=doc,
         editing=next((item for item in item_dicts(items) if item["id"] == request.args.get("position", type=int)), None), summary=summary, customer=customer, settings=settings,
-        entries=store().invoice_entries(invoice_id), related=related, problems=problems,
-        xrechnung_missing=billing.xrechnung_problems(doc["seller"], doc["buyer"]),
-        UNITS=billing.UNITS, POSITION_MODES=billing.POSITION_MODES, STATUS_LABELS=billing.STATUS_LABELS,
-        CUSTOMER_TAX_MODES=billing.CUSTOMER_TAX_MODES, fmt_quantity=billing.fmt_quantity, unit_label=billing.unit_label,
+        entries=store().invoice_entries(invoice_id), related=related, problems=[_(problem) for problem in problems],
+        xrechnung_missing=[_(problem) for problem in billing.xrechnung_problems(doc["seller"], doc["buyer"])],
         today=today(),
     )
 
 
 def cancel(invoice):
     """Stornorechnung (Typ 381) mit denselben Positionen; die Zeiten werden wieder freigegeben."""
+    language = invoice["language"]
     with store().connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         if connection.execute("SELECT 1 FROM invoices WHERE corrects_id = ?", (invoice["id"],)).fetchone():
             abort(409)
         cancellation_id = connection.execute(
             "INSERT INTO invoices (user_id, customer_id, type_code, corrects_id, issue_date, service_from, service_to, buyer_reference, "
-            "intro, footer, closing, timesheet, created_at) VALUES (?, ?, '381', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            "intro, footer, closing, timesheet, language, created_at) VALUES (?, ?, '381', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
             (current_user.uid, invoice["customer_id"], invoice["id"], today().isoformat(), invoice["service_from"], invoice["service_to"],
              invoice["buyer_reference"],
-             f"Hiermit storniere ich die Rechnung {invoice['number']} vom {billing.as_date(invoice['issue_date']).strftime('%d.%m.%Y')} vollständig.",
-             "Bereits gezahlte Beträge werden erstattet bzw. verrechnet." if invoice["status"] == "paid" else
-             "Die ursprüngliche Rechnung ist damit gegenstandslos und muss nicht bezahlt werden.",
-             invoice["closing"], int(time.time()))).lastrowid
+             _("Hiermit storniere ich die Rechnung %(number)s vom %(date)s vollständig.", language, number=invoice["number"],
+               date=i18n.fmt_date(invoice["issue_date"], language)),
+             _("Bereits gezahlte Beträge werden erstattet bzw. verrechnet.", language) if invoice["status"] == "paid" else
+             _("Die ursprüngliche Rechnung ist damit gegenstandslos und muss nicht bezahlt werden.", language),
+             invoice["closing"], language, int(time.time()))).lastrowid
         connection.execute(
             "INSERT INTO invoice_items (invoice_id, position, description, detail, quantity, unit, price_cents, vat_rate, line_cents) "
             "SELECT ?, position, description, detail, quantity, unit, price_cents, vat_rate, line_cents FROM invoice_items WHERE invoice_id = ?",
@@ -430,7 +439,7 @@ def cancel(invoice):
     with store().connect() as connection:
         connection.execute("UPDATE invoices SET status = 'cancelled' WHERE id = ?", (invoice["id"],))
         connection.execute("UPDATE entries SET invoice_id = NULL WHERE invoice_id = ?", (invoice["id"],))
-    flash(f"Stornorechnung {number} erstellt. Die Zeiten sind wieder offen und können neu abgerechnet werden.", "success")
+    flash(_("Stornorechnung %(number)s erstellt. Die Zeiten sind wieder offen und können neu abgerechnet werden.", number=number), "success")
     return redirect(url_for("invoicing.invoice", invoice_id=cancellation_id))
 
 
@@ -440,13 +449,13 @@ def invoice_pdf_file(invoice_id):
     invoice = own_invoice(invoice_id)
     inline = request.args.get("ansehen") == "1"
     if invoice["status"] == "draft":
-        doc, _ = build_doc(invoice)
+        doc, _ignored = build_doc(invoice)
         pdf = invoice_pdf.render(doc, draft=True, timesheet=timesheet_rows(invoice) if invoice["timesheet"] else None)
         return Response(pdf, mimetype="application/pdf",
                         headers={"Content-Disposition": f'{"inline" if inline else "attachment"}; filename="Entwurf-{invoice_id}.pdf"'})
     path = archive_dir(current_user.uid) / invoice["pdf_file"]
     if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != invoice["pdf_sha256"]:
-        abort(410, "Archivdatei fehlt oder wurde verändert.")
+        abort(410, _("Archivdatei fehlt oder wurde verändert."))
     return send_file(path, mimetype="application/pdf", as_attachment=not inline, download_name=path.name)
 
 
@@ -456,11 +465,11 @@ def invoice_xml(invoice_id, variant):
     invoice = own_invoice(invoice_id)
     if invoice["status"] == "draft" or variant not in ("zugferd", "xrechnung"):
         abort(404)
-    doc, _ = build_doc(invoice)
+    doc, _ignored = build_doc(invoice)
     if variant == "xrechnung":
         missing = billing.xrechnung_problems(doc["seller"], doc["buyer"])
         if missing:
-            flash("Für XRechnung fehlt: " + ", ".join(missing) + ". Ergänzen und die Rechnung ggf. stornieren und neu erstellen.", "error")
+            flash(_("Für XRechnung fehlt: %(fields)s. Ergänzen und die Rechnung ggf. stornieren und neu erstellen.", fields=", ".join(_(m) for m in missing)), "error")
             return redirect(url_for("invoicing.invoice", invoice_id=invoice_id))
     xml = einvoice.build_cii(doc, xrechnung=variant == "xrechnung")
     name = f"{safe_filename(invoice['number'])}{'-xrechnung' if variant == 'xrechnung' else ''}.xml"
@@ -478,11 +487,12 @@ def customers():
                   ("number", "name", "contact", "street", "zip", "city", "email", "vat_id", "leitweg_id")}
         values["country"] = clean(request.form.get("country"), 2).upper() or "DE"
         values["tax_mode"] = request.form.get("tax_mode", "domestic")
+        values["language"] = request.form.get("language", "de")
         days = request.form.get("payment_days", "").strip()
         values["payment_days"] = int(days) if days.isdigit() and 0 <= int(days) <= 365 else None
-        if (not values["name"] or values["tax_mode"] not in billing.CUSTOMER_TAX_MODES or not re.fullmatch(r"[A-Z]{2}", values["country"])
+        if (not values["name"] or values["tax_mode"] not in billing.CUSTOMER_TAX_MODES or values["language"] not in i18n.LANGUAGES or not re.fullmatch(r"[A-Z]{2}", values["country"])
                 or (values["email"] and "@" not in values["email"]) or (days and values["payment_days"] is None)):
-            flash("Bitte Name, Ländercode (z. B. DE), E-Mail und Zahlungsziel prüfen.", "error")
+            flash(_("Bitte Name, Ländercode (z. B. DE), E-Mail und Zahlungsziel prüfen."), "error")
             return redirect(url_for("invoicing.customers", edit=customer_id))
         try:
             with store().connect() as connection:
@@ -498,9 +508,9 @@ def customers():
                         f"INSERT INTO customers (user_id, {columns}) VALUES (?, {', '.join('?' * len(values))})",
                         (current_user.uid, *values.values())).lastrowid
         except sqlite3.IntegrityError:
-            flash("Einen Kunden mit diesem Namen gibt es schon.", "error")
+            flash(_("Einen Kunden mit diesem Namen gibt es schon."), "error")
             return redirect(url_for("invoicing.customers"))
-        flash(f"Kunde „{values['name']}“ gespeichert.", "success")
+        flash(_("Kunde „%(name)s“ gespeichert.", name=values["name"]), "success")
         return redirect(url_for("invoicing.customers"))
     with store().connect() as connection:
         stats = {row["customer_id"]: dict(row) for row in connection.execute(
@@ -516,7 +526,7 @@ def customers():
         prefix = re.match(r"\D*", next(c["number"] for c in all_customers if re.fullmatch(r"\D*\d+", c["number"] or ""))).group(0)
         suggestion = f"{prefix}{max(numbers) + 1}"
     return render_template("customers.html", customers=all_customers, edit=edit, stats=stats, project_counts=project_counts,
-                           suggestion=suggestion or "K-1001", CUSTOMER_TAX_MODES=billing.CUSTOMER_TAX_MODES,
+                           suggestion=suggestion or "K-1001",
                            invoicing=store().invoice_settings(current_user.uid)["enabled"])
 
 
@@ -530,12 +540,12 @@ def manage_customer(customer_id, action):
         if action == "archive":
             connection.execute("UPDATE customers SET archived = 1 - archived WHERE id = ?", (customer_id,))
         elif connection.execute("SELECT 1 FROM invoices WHERE customer_id = ?", (customer_id,)).fetchone():
-            flash("Kunden mit Rechnungen können nur archiviert werden.", "error")
+            flash(_("Kunden mit Rechnungen können nur archiviert werden."), "error")
             return redirect(url_for("invoicing.customers", edit=customer_id))
         else:
             connection.execute("UPDATE projects SET client = '' WHERE customer_id = ?", (customer_id,))
             connection.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
-            flash(f"„{customer['name']}“ gelöscht.", "success")
+            flash(_("„%(name)s“ gelöscht.", name=customer["name"]), "success")
     return redirect(url_for("invoicing.customers"))
 
 
@@ -563,7 +573,8 @@ def invoice_settings():
         values["payment_days"] = request.form.get("payment_days", type=int)
         values["next_number"] = request.form.get("next_number", type=int)
         for key in ("intro", "footer"):
-            values[key] = request.form.get(key, "").strip()[:2000]
+            # Leer = Standardtext, der in der jeweiligen Rechnungssprache eingesetzt wird
+            values[key] = request.form.get(key, "").strip()[:2000] or None
         values["closing"] = request.form.get("closing", "").strip()[:300]
         errors = []
         if values["vat_mode"] not in billing.VAT_MODES or rate is None:
@@ -581,18 +592,17 @@ def invoice_settings():
         if values["email"] and "@" not in values["email"]:
             errors.append("E-Mail")
         if errors:
-            flash("Bitte prüfen: " + ", ".join(errors) + ".", "error")
+            flash(_("Bitte prüfen: %(fields)s.", fields=", ".join(_(error) for error in errors)), "error")
         else:
             values["default_vat_rate"] = str(rate)
             store().update_invoice_settings(current_user.uid, **values)
-            flash("Rechnungseinstellungen gespeichert.", "success")
+            flash(_("Rechnungseinstellungen gespeichert."), "success")
         return redirect(url_for("invoicing.invoice_settings"))
     settings = store().invoice_settings(current_user.uid)
     preview_day = today()
     counter = 1 if settings["reset_yearly"] and settings["number_year"] not in (None, preview_day.year) else settings["next_number"]
     return render_template(
-        "invoice_settings.html", settings=settings, VAT_MODES=billing.VAT_MODES, POSITION_MODES=billing.POSITION_MODES,
-        ROUNDING_CHOICES=billing.ROUNDING_CHOICES, DEFAULT_INTRO=billing.DEFAULT_INTRO, DEFAULT_FOOTER=billing.DEFAULT_FOOTER,
+        "invoice_settings.html", settings=settings, DEFAULT_INTRO=billing.DEFAULT_INTRO, DEFAULT_FOOTER=billing.DEFAULT_FOOTER,
         preview=billing.format_number(settings["number_format"], counter, preview_day),
     )
 

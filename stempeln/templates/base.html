@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Stempeln">
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  <title>{% block title %}Heute{% endblock %} · Stempeln</title>
+  <title>{% block title %}{{ _('Heute') }}{% endblock %} · Stempeln</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='icons/app-icon.svg') }}">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='fonts.css') }}">
@@ -20,18 +20,19 @@
     <div class="topbar-inner">
       <a class="brand" href="{{ url_for('index') }}"><img class="brand-mark" src="{{ url_for('static', filename='icons/app-icon.svg') }}" alt=""><span>stempeln<span class="accent">.</span></span></a>
       {% if current_user.is_authenticated %}
-      <nav class="navigation" aria-label="Hauptnavigation">
-        {% for endpoint, label in [('index', 'Heute'), ('times', 'Zeiten'), ('projects', 'Projekte'), ('absences', 'Abwesenheit'), ('automation', 'Automatik'), ('account', 'Konto')] %}
+      <nav class="navigation" aria-label="{{ _('Hauptnavigation') }}">
+        {% for endpoint, label in [('index', _('Heute')), ('times', _('Zeiten')), ('projects', _('Projekte')), ('absences', _('Abwesenheit')), ('automation', _('Automatik')), ('account', _('Konto'))] %}
         {% if endpoint != 'absences' or nav_profile.track_balance %}<a class="{% if request.endpoint == endpoint %}active{% endif %}" href="{{ url_for(endpoint) }}">{{ label }}</a>{% endif %}
         {% endfor %}
-        {% if nav_invoicing %}<a class="{% if request.endpoint and request.endpoint.startswith('invoicing.') %}active{% endif %}" href="{{ url_for('invoicing.invoices') }}">Rechnungen</a>{% endif %}
-        {% if current_user.role == 'admin' %}<a class="{% if request.endpoint == 'users' %}active{% endif %}" href="{{ url_for('users') }}">Benutzer</a>{% endif %}
+        {% if nav_invoicing %}<a class="{% if request.endpoint and request.endpoint.startswith('invoicing.') %}active{% endif %}" href="{{ url_for('invoicing.invoices') }}">{{ _('Rechnungen') }}</a>{% endif %}
+        {% if current_user.role == 'admin' %}<a class="{% if request.endpoint == 'users' %}active{% endif %}" href="{{ url_for('users') }}">{{ _('Benutzer') }}</a>{% endif %}
       </nav>
       {% endif %}
       <div class="top-actions">
-        <button class="icon-button theme-toggle" type="button" title="Darstellung: System / Hell / Dunkel" aria-label="Darstellung wechseln">◐</button>
+        <form action="{{ url_for('set_language') }}" method="post" class="language-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.full_path if request.method == 'GET' else url_for('index') }}">{% set other = 'en' if lang == 'de' else 'de' %}<button class="icon-button language-toggle" type="submit" name="lang" value="{{ other }}" title="{{ LANGUAGES[other] }}" aria-label="{{ LANGUAGES[other] }}">{{ other | upper }}</button></form>
+        <button class="icon-button theme-toggle" type="button" title="{{ _('Darstellung: System / Hell / Dunkel') }}" aria-label="{{ _('Darstellung wechseln') }}">◐</button>
         {% if current_user.is_authenticated %}
-        <form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" type="submit" title="Abmelden" aria-label="Abmelden">↪</button></form>
+        <form action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-button" type="submit" title="{{ _('Abmelden') }}" aria-label="{{ _('Abmelden') }}">↪</button></form>
         {% endif %}
       </div>
     </div>

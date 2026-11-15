@@ -9,6 +9,7 @@ services:
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-60}
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-de}
     volumes:
       - stempeln-data:/data
     ports:
