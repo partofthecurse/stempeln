@@ -289,3 +289,66 @@ def project_amount(seconds, project):
 
 def rate_suffix(project):
     return N_("/Tag") if (project or {}).get("billing_unit") == "day" else "/h"
+
+
+# ------------------------------------------------------------------ Rechnungslayout
+
+PDF_FONTS = OrderedDict([("dmsans", "DM Sans"), ("anuphan", "Anuphan"), ("ibmplexsans", "IBM Plex Sans"),
+                         ("inter", "Inter"), ("sourceserif", "Source Serif")])
+LOGO_POSITIONS = OrderedDict([("right", N_("Rechts")), ("left", N_("Links")), ("center", N_("Mitte"))])
+LAYOUT_DEFAULTS = {
+    "font": "dmsans", "accent": "#2f55c9", "logo_position": "right", "logo_height": 16,
+    "header_text": True, "sender_line": True, "fold_marks": False, "page_numbers": True, "footer": True,
+    "footer_owner": False, "girocode": True, "salutation": True, "signature": True, "info_customer_number": True,
+    "info_contact": False, "info_due_date": True, "address_country": False, "title_accent": False, "table_accent": False,
+}
+LAYOUT_FLAGS = [key for key, value in LAYOUT_DEFAULTS.items() if isinstance(value, bool)]
+
+
+def layout_values(raw):
+    """Gespeichertes Layout (JSON-Text oder dict) mit Standardwerten auffüllen und prüfen."""
+    import json
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except ValueError:
+            raw = {}
+    values = dict(LAYOUT_DEFAULTS)
+    for key, value in (raw or {}).items():
+        if key in LAYOUT_DEFAULTS and type(value) is type(LAYOUT_DEFAULTS[key]):
+            values[key] = value
+    if values["font"] not in PDF_FONTS:
+        values["font"] = LAYOUT_DEFAULTS["font"]
+    if values["logo_position"] not in LOGO_POSITIONS:
+        values["logo_position"] = "right"
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", values["accent"]):
+        values["accent"] = LAYOUT_DEFAULTS["accent"]
+    values["logo_height"] = max(8, min(40, int(values["logo_height"])))
+    return values
+
+
+def layout_from_form(form):
+    values = {key: bool(form.get(key)) for key in LAYOUT_FLAGS}
+    values.update(font=form.get("font", ""), accent=(form.get("accent") or "").strip(), logo_position=form.get("logo_position", ""))
+    try:
+        values["logo_height"] = int(form.get("logo_height") or LAYOUT_DEFAULTS["logo_height"])
+    except ValueError:
+        values["logo_height"] = LAYOUT_DEFAULTS["logo_height"]
+    return layout_values(values)
+
+
+def hex_to_rgb(value):
+    value = value.lstrip("#")
+    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def epc_payload(seller, cents, reference):
+    """Inhalt eines GiroCodes (EPC069-12, Version 002, SEPA-Überweisung in Euro)."""
+    iban = (seller.get("iban") or "").replace(" ", "").upper()
+    name = (seller.get("account_holder") or seller.get("company") or "").strip()[:70]
+    if not iban or not name or not 1 <= cents <= 99999999999:
+        return None
+    text = (f"{reference}" if reference else "").strip()[:140]
+    lines = ["BCD", "002", "1", "SCT", (seller.get("bic") or "").replace(" ", "").upper(), name, iban,
+             f"EUR{cents // 100}.{cents % 100:02d}", "", "", text]
+    return "\n".join(lines).rstrip("\n")

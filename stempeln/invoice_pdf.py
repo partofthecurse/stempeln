@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
+import qrcode
 from fpdf import FPDF
 from fpdf.enums import OutputIntentSubType, XPos, YPos
 from fpdf.output import PDFICCProfile
@@ -13,12 +14,19 @@ from . import billing, i18n
 from .einvoice import build_cii
 
 FONT_DIR = Path(__file__).parent / "pdf_fonts"
-ACCENT = (47, 85, 201)
 INK = (28, 31, 38)
 MUTED = (110, 116, 128)
 LINE = (220, 224, 232)
 LEFT, RIGHT = 20, 190
 WIDTH = RIGHT - LEFT
+COUNTRY_NAMES = {
+    "de": {"DE": "Deutschland", "AT": "Österreich", "CH": "Schweiz", "NL": "Niederlande", "FR": "Frankreich", "IT": "Italien",
+           "BE": "Belgien", "LU": "Luxemburg", "DK": "Dänemark", "PL": "Polen", "CZ": "Tschechien", "ES": "Spanien",
+           "GB": "Vereinigtes Königreich", "US": "USA"},
+    "en": {"DE": "Germany", "AT": "Austria", "CH": "Switzerland", "NL": "Netherlands", "FR": "France", "IT": "Italy",
+           "BE": "Belgium", "LU": "Luxembourg", "DK": "Denmark", "PL": "Poland", "CZ": "Czechia", "ES": "Spain",
+           "GB": "United Kingdom", "US": "USA"},
+}
 
 TYPE_TITLES = {"380": i18n.N_("Rechnung"), "381": i18n.N_("Stornorechnung")}
 
@@ -77,12 +85,18 @@ class InvoicePDF(FPDF):
         super().__init__(format="A4", unit="mm", enforce_compliance="PDF/A-3B")
         self.doc, self.draft = doc, draft
         self.language = doc.get("language") or "de"
+        self.layout = billing.layout_values(doc.get("layout"))
+        self.accent = billing.hex_to_rgb(self.layout["accent"])
+        family = self.layout["font"] if self.layout["font"] in billing.PDF_FONTS else "dmsans"
         for style, weight in (("", "400"), ("B", "700")):
-            self.add_font("DM", style, FONT_DIR / f"dmsans-latin-{weight}.ttf")
+            if family == "dmsans":
+                self.add_font("Body", style, FONT_DIR / f"dmsans-latin-{weight}.ttf")
+            else:
+                self.add_font("Body", style, FONT_DIR / f"{family}-{weight}.ttf")
             self.add_font("DMX", style, FONT_DIR / f"dmsans-latin-ext-{weight}.ttf")
         self.set_fallback_fonts(["DMX"])
         self.set_margins(LEFT, 18, 210 - RIGHT)
-        self.set_auto_page_break(True, margin=32)
+        self.set_auto_page_break(True, margin=34 if self.layout["footer"] else 22)
         self.c_margin = 1
 
     def multi_cell(self, *args, **kwargs):
@@ -93,43 +107,92 @@ class InvoicePDF(FPDF):
         return i18n.gettext(text, self.language, **values)
 
     def font(self, size, bold=False, color=INK):
-        self.set_font("DM", "B" if bold else "", size)
+        self.set_font("Body", "B" if bold else "", size)
         self.set_text_color(*color)
 
+    @property
+    def bottom(self):
+        return 297 - (36 if self.layout["footer"] else 24)
+
     def header(self):
-        seller = self.doc["seller"]
+        seller, layout = self.doc["seller"], self.layout
         if self.draft:
-            self.font(56, True, (236, 239, 246))
+            self.font(56, True, tuple(int(c + (255 - c) * 0.88) for c in self.accent))
             with self.rotation(35, 105, 160):
                 self.text(38, 175, self.t("ENTWURF"))
-        self.font(15, True, ACCENT)
-        self.set_xy(LEFT, 16)
-        self.cell(WIDTH, 7, seller.get("company") or "", align="R")
-        self.font(8.5, False, MUTED)
-        lines = [seller.get("street"), f"{seller.get('zip', '')} {seller.get('city', '')}".strip(), seller.get("phone"),
-                 seller.get("email"), seller.get("website")]
-        self.set_xy(LEFT, 24)
-        self.multi_cell(WIDTH, 4, "\n".join(line for line in lines if line), align="R")
+        if layout["fold_marks"]:
+            self.set_draw_color(*MUTED)
+            self.set_line_width(0.2)
+            for y in (105, 148.5, 210):
+                self.line(4, y, 9 if y != 148.5 else 7, y)
+        top = 14
+        logo = self.doc.get("logo")
+        logo_bottom = top
+        if logo:
+            height = layout["logo_height"]
+            width = _logo_width(logo, height)
+            x = {"left": LEFT, "center": 105 - width / 2}.get(layout["logo_position"], RIGHT - width)
+            self.image(logo, x=x, y=top, h=height)
+            logo_bottom = top + height + 3
+        if layout["header_text"]:
+            right_side = not logo or layout["logo_position"] != "right"
+            y = top if right_side and layout["logo_position"] != "center" else logo_bottom
+            self.font(13 if logo else 15, True, self.accent)
+            self.set_xy(LEFT, y)
+            self.cell(WIDTH, 6, seller.get("company") or "", align="R")
+            self.font(8.5, False, MUTED)
+            lines = [seller.get("street"), f"{seller.get('zip', '')} {seller.get('city', '')}".strip(), seller.get("phone"),
+                     seller.get("email"), seller.get("website")]
+            self.set_xy(LEFT, y + 7)
+            self.multi_cell(WIDTH, 4, "\n".join(line for line in lines if line), align="R")
         if self.page_no() > 1:
-            self.set_y(max(self.get_y() + 4, 44))
+            self.set_y(max(self.get_y() + 6, logo_bottom + 4, 40))
 
     def footer(self):
-        seller = self.doc["seller"]
+        seller, layout = self.doc["seller"], self.layout
+        if layout["page_numbers"]:
+            self.font(7.5, False, MUTED)
+            self.set_xy(LEFT, (272 if layout["footer"] else 284) - 5)
+            self.cell(WIDTH, 4, f"{self.page_no()}/{{nb}}", align="R")
+        if not layout["footer"]:
+            return
         self.set_draw_color(*LINE)
         self.line(LEFT, 272, RIGHT, 272)
-        self.font(7.5, False, MUTED)
+        self.font(7.2, False, MUTED)
+        country = COUNTRY_NAMES.get(self.language, {}).get((seller.get("country") or "DE").upper(), seller.get("country"))
         columns = [
-            [seller.get("company"), seller.get("street"), f"{seller.get('zip', '')} {seller.get('city', '')}".strip()],
-            [self.t("Steuernummer: %(value)s", value=seller["tax_number"]) if seller.get("tax_number") else "",
-             self.t("USt-IdNr.: %(value)s", value=seller["vat_id"]) if seller.get("vat_id") else "", seller.get("email")],
-            [seller.get("bank_name"), f"IBAN: {format_iban(seller.get('iban'))}" if seller.get("iban") else "",
-             f"BIC: {seller['bic']}" if seller.get("bic") else ""],
+            [seller.get("company"), seller.get("street"), f"{seller.get('zip', '')} {seller.get('city', '')}".strip(), country],
+            [self.t("Tel. %(value)s", value=seller["phone"]) if seller.get("phone") else "",
+             self.t("E-Mail %(value)s", value=seller["email"]) if seller.get("email") else "",
+             self.t("Web %(value)s", value=seller["website"]) if seller.get("website") else ""],
+            [self.t("USt-IdNr. %(value)s", value=seller["vat_id"]) if seller.get("vat_id") else "",
+             self.t("Steuer-Nr. %(value)s", value=seller["tax_number"]) if seller.get("tax_number") else "",
+             self.t("Inhaber/-in %(value)s", value=seller["contact_name"]) if layout["footer_owner"] and seller.get("contact_name") else ""],
+            [seller.get("bank_name"), f"IBAN {format_iban(seller.get('iban'))}" if seller.get("iban") else "",
+             f"BIC {seller['bic']}" if seller.get("bic") else ""],
         ]
-        for index, column in enumerate(columns):
-            self.set_xy(LEFT + index * WIDTH / 3, 274)
-            self.multi_cell(WIDTH / 3 - 2, 3.6, "\n".join(line for line in column if line))
-        self.set_xy(LEFT, 287)
-        self.cell(WIDTH, 4, self.t("Seite %(page)s", page=f"{self.page_no()}/{{nb}}"), align="R")
+        # Breiten nach typischem Inhalt: Bank/IBAN braucht am meisten Platz
+        weights = [0.20, 0.27, 0.24, 0.29]
+        used = [(column, weight) for column, weight in zip(columns, weights) if any(column)]
+        total = sum(weight for _, weight in used) or 1
+        x = LEFT
+        for column, weight in used:
+            width = WIDTH * weight / total
+            self.set_xy(x, 274)
+            self.multi_cell(width - 2, 3.5, "\n".join(line for line in column if line))
+            x += width
+
+
+_LOGO_SIZES = {}
+
+
+def _logo_width(path, height):
+    from PIL import Image
+    key = (str(path), Path(path).stat().st_mtime if Path(path).exists() else 0)
+    if key not in _LOGO_SIZES:
+        with Image.open(path) as image:
+            _LOGO_SIZES[key] = image.width / image.height
+    return min(height * _LOGO_SIZES[key], WIDTH)
 
 
 def format_iban(iban):
@@ -145,6 +208,17 @@ def _period(doc):
     if first == last:
         return i18n.fmt_date(first, language)
     return f"{i18n.fmt_date(first, language)} – {i18n.fmt_date(last, language)}"
+
+
+def girocode_image(seller, cents, reference):
+    """EPC-QR-Code (GiroCode) nach EPC069-12, Version 002."""
+    payload = billing.epc_payload(seller, cents, reference)
+    if not payload:
+        return None
+    code = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=0, box_size=10)
+    code.add_data(payload.encode("utf-8"))
+    code.make(fit=True)
+    return code.make_image(fill_color="black", back_color="white").get_image().convert("RGB")
 
 
 def render(doc, draft=False, timesheet=None, xml=None):
@@ -163,8 +237,10 @@ def render(doc, draft=False, timesheet=None, xml=None):
     def day(value):
         return i18n.fmt_date(value, language)
 
-    title = f"{t(TYPE_TITLES[doc['type_code']])} {doc['number'] if doc['number'] != 'Entwurf' else t('Entwurf')}"
+    number = doc["number"] if doc["number"] != "Entwurf" else t("Entwurf")
+    title = f"{t(TYPE_TITLES[doc['type_code']])} {number}"
     pdf = InvoicePDF(doc, draft)
+    layout, accent = pdf.layout, pdf.accent
     created = datetime.now(timezone.utc)
     pdf.set_creation_date(created)
     pdf.set_title(title)
@@ -177,92 +253,107 @@ def render(doc, draft=False, timesheet=None, xml=None):
     pdf.add_page()
 
     # Absenderzeile + Anschriftfeld (DIN 5008 Form B: Fenster ab 45 mm)
-    pdf.font(7, False, MUTED)
-    pdf.set_xy(LEFT, 47)
-    sender = " · ".join(part for part in (seller.get("company"), seller.get("street"),
-                                          f"{seller.get('zip', '')} {seller.get('city', '')}".strip()) if part)
-    pdf.cell(85, 4, sender)
-    pdf.set_draw_color(*LINE)
-    pdf.line(LEFT, 51.5, LEFT + 85, 51.5)
+    if layout["sender_line"]:
+        pdf.font(7, False, MUTED)
+        pdf.set_xy(LEFT, 47)
+        sender = " · ".join(part for part in (seller.get("company"), seller.get("street"),
+                                              f"{seller.get('zip', '')} {seller.get('city', '')}".strip()) if part)
+        pdf.cell(85, 4, sender)
+        pdf.set_draw_color(*LINE)
+        pdf.line(LEFT, 51.5, LEFT + 85, 51.5)
     pdf.font(10)
     pdf.set_xy(LEFT, 54)
     address = [buyer.get("name"), buyer.get("contact"), buyer.get("street"),
                f"{buyer.get('zip', '')} {buyer.get('city', '')}".strip()]
-    if (buyer.get("country") or "DE").upper() != "DE":
-        address.append(buyer["country"].upper())
+    country = (buyer.get("country") or "DE").upper()
+    if country != "DE" or layout["address_country"]:
+        address.append(COUNTRY_NAMES.get(language, {}).get(country, country))
     pdf.multi_cell(85, 5, "\n".join(line for line in address if line))
 
     # Infoblock rechts
-    number = doc["number"] if doc["number"] != "Entwurf" else t("Entwurf")
-    info = [(t("Rechnungsnummer") if sign > 0 else t("Stornonummer"), number),
-            (t("Rechnungsdatum") if sign > 0 else t("Datum"), day(doc["issue_date"]))]
-    if buyer.get("number"):
-        info.append((t("Kundennummer"), buyer["number"]))
+    info = [(t("Rechnungsdatum") if sign > 0 else t("Datum"), day(doc["issue_date"]))]
+    reference = doc.get("buyer_reference") or ""
+    if buyer.get("leitweg_id"):
+        info.append((t("Leitweg-ID"), buyer["leitweg_id"]))
+    elif reference:
+        info.append((t("Referenz"), reference))
     if _period(doc):
-        info.append((t("Leistungszeitraum"), _period(doc)))
-    if doc.get("due_date") and sign > 0:
+        single = doc["service_from"] == doc["service_to"]
+        info.append((t("Leistungsdatum") if single else t("Leistungszeitraum"), _period(doc)))
+    if doc.get("due_date") and sign > 0 and layout["info_due_date"]:
         info.append((t("Fällig am"), day(doc["due_date"])))
     if doc.get("preceding"):
         info.append((t("Zu Rechnung"), t("%(number)s vom %(date)s", number=doc["preceding"][0], date=day(doc["preceding"][1]))))
-    if buyer.get("leitweg_id"):
-        info.append((t("Leitweg-ID"), buyer["leitweg_id"]))
+    if buyer.get("number") and layout["info_customer_number"]:
+        info.append((t("Ihre Kundennummer"), buyer["number"]))
     if buyer.get("vat_id"):
         info.append((t("USt-IdNr. Kunde"), buyer["vat_id"]))
-    y = 54
+    if seller.get("contact_name") and layout["info_contact"]:
+        info.append((t("Ihr Ansprechpartner"), seller["contact_name"]))
+    pdf.set_xy(122, 50)
+    pdf.font(11, True, accent)
+    pdf.cell(26, 6, t("Rechnungs-Nr.") if sign > 0 else t("Storno-Nr."))
+    pdf.cell(42, 6, number, align="R")
+    y = 57
     for label, value in info:
         pdf.set_xy(122, y)
         pdf.font(8.5, False, MUTED)
-        pdf.cell(26, 5, label)
-        pdf.font(8.5, True)
-        pdf.cell(42, 5, value, align="R")
-        y += 5
+        pdf.cell(30, 4.6, label)
+        pdf.font(8.5, False)
+        pdf.cell(38, 4.6, value, align="R")
+        y += 4.6
 
-    pdf.set_y(max(102, y + 8))
-    pdf.font(17, True)
+    pdf.set_y(max(100, y + 10))
+    pdf.font(16, True, accent if layout["title_accent"] else INK)
     pdf.cell(WIDTH, 9, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.ln(2)
+    pdf.ln(3)
+    pdf.font(10)
+    if layout["salutation"] and doc.get("salutation"):
+        pdf.multi_cell(WIDTH, 5, doc["salutation"], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(2.5)
     if doc.get("intro"):
-        pdf.font(10)
         pdf.multi_cell(WIDTH, 5, doc["intro"], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-        pdf.ln(3)
+        pdf.ln(4)
 
     # Positionen
     multi_rate = len({str(item["vat_rate"]) for item in doc["items"]}) > 1 and doc["tax_mode"] == "standard"
     columns = [(t("Pos."), 11, "L"), (t("Beschreibung"), 79 if multi_rate else 92, "L"), (t("Menge"), 20, "R"),
                (t("Einzelpreis"), 24, "R")] + ([(t("USt."), 13, "R")] if multi_rate else []) + [(t("Gesamt"), 23, "R")]
+    head_fill = tuple(int(c + (255 - c) * 0.92) for c in accent)
 
     def table_header():
-        pdf.font(8, True, MUTED)
-        pdf.set_fill_color(244, 246, 250)
+        pdf.font(8, True, accent if layout["table_accent"] else MUTED)
+        pdf.set_fill_color(*(head_fill if layout["table_accent"] else (244, 246, 250)))
         for label, width, align in columns:
             pdf.cell(width, 7, label, align=align, fill=True)
         pdf.ln(7)
 
     table_header()
+    pdf.set_draw_color(*LINE)
     for position, item in enumerate(doc["items"], start=1):
         description_width = columns[1][1]
         pdf.font(9.5, True)
         lines = pdf.multi_cell(description_width, 4.6, item["description"], dry_run=True, output="LINES")
         detail_lines = []
         if item.get("detail"):
-            pdf.font(8, False, MUTED)
-            detail_lines = pdf.multi_cell(description_width, 4, item["detail"], dry_run=True, output="LINES")
-        height = len(lines) * 4.6 + len(detail_lines) * 4 + 3
-        if pdf.get_y() + height > 297 - 34:
+            pdf.font(8.5, False, MUTED)
+            detail_lines = pdf.multi_cell(description_width, 4.2, item["detail"], dry_run=True, output="LINES")
+        height = len(lines) * 4.6 + len(detail_lines) * 4.2 + 3
+        if pdf.get_y() + height > pdf.bottom:
             pdf.add_page()
             table_header()
         top = pdf.get_y() + 1.5
         pdf.set_xy(LEFT, top)
         pdf.font(9.5)
-        pdf.cell(columns[0][1], 4.6, str(position))
+        pdf.cell(columns[0][1], 4.6, f"{position}.")
         x = LEFT + columns[0][1]
         pdf.set_xy(x, top)
         pdf.font(9.5, True)
         pdf.multi_cell(description_width, 4.6, item["description"])
         if detail_lines:
             pdf.set_x(x)
-            pdf.font(8, False, MUTED)
-            pdf.multi_cell(description_width, 4, item["detail"])
+            pdf.font(8.5, False, MUTED)
+            pdf.multi_cell(description_width, 4.2, item["detail"])
         x += description_width
         quantity = f"{billing.fmt_quantity(item['quantity'], language)} {billing.unit_label(item['unit'], item['quantity'], language)}"
         values = [quantity, money(item["price_cents"])] + ([billing.fmt_rate(item["vat_rate"], language)] if multi_rate else []) \
@@ -281,7 +372,7 @@ def render(doc, draft=False, timesheet=None, xml=None):
         if doc["tax_mode"] == "standard":
             rows.append((t("Umsatzsteuer %(rate)s auf %(basis)s", rate=billing.fmt_rate(group["rate"], language),
                            basis=money(sign * group["basis"])), group["tax"]))
-    if pdf.get_y() + 12 + len(rows) * 6 > 297 - 34:
+    if pdf.get_y() + 14 + len(rows) * 6 > pdf.bottom:
         pdf.add_page()
     pdf.ln(3)
     for label, cents in rows:
@@ -290,16 +381,16 @@ def render(doc, draft=False, timesheet=None, xml=None):
         pdf.cell(65, 6, label, align="R")
         pdf.font(9.5)
         pdf.cell(25, 6, money(sign * cents), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_draw_color(*ACCENT)
+    pdf.set_draw_color(*accent)
     pdf.line(110, pdf.get_y() + 1, RIGHT, pdf.get_y() + 1)
     pdf.ln(2.5)
     pdf.set_x(100)
     pdf.font(11, True)
     pdf.cell(65, 7, t("Gesamtbetrag") if doc["tax_mode"] != "standard" else t("Rechnungsbetrag"), align="R")
-    pdf.font(11, True, ACCENT)
+    pdf.font(11, True, accent)
     pdf.cell(25, 7, money(sign * summary["gross"]), align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.set_draw_color(*LINE)
-    pdf.ln(6)
+    pdf.ln(7)
 
     notes = [t(group["reason"]) for group in summary["groups"] if group["reason"]]
     if doc.get("footer"):
@@ -308,13 +399,33 @@ def render(doc, draft=False, timesheet=None, xml=None):
     for note in dict.fromkeys(notes):
         pdf.multi_cell(WIDTH, 5, note, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(1.5)
-    if doc.get("closing"):
+    closing = doc.get("closing") or ""
+    if layout["signature"] and seller.get("contact_name"):
+        closing = f"{closing}\n{seller['contact_name']}".strip()
+    if closing:
         pdf.ln(2)
-        pdf.multi_cell(WIDTH, 5, doc["closing"], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.multi_cell(WIDTH, 5, closing, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+
+    # GiroCode: nur für Rechnungen mit offenem Betrag in Euro und IBAN
+    if layout["girocode"] and sign > 0 and summary["gross"] > 0:
+        image = girocode_image(seller, summary["gross"], number if doc["number"] != "Entwurf" else "")
+        if image is not None:
+            size = 24
+            if pdf.get_y() + size + 10 > pdf.bottom:
+                pdf.add_page()
+            pdf.ln(5)
+            y = pdf.get_y()
+            pdf.image(image, x=LEFT, y=y, w=size, h=size)
+            pdf.set_xy(LEFT, y + size + 0.5)
+            pdf.font(6.5, False, MUTED)
+            pdf.cell(size, 3, "GiroCode", align="C")
+            pdf.set_xy(LEFT + size + 4, y + 2)
+            pdf.font(8, False, MUTED)
+            pdf.multi_cell(80, 4, t("Zum Bezahlen mit der Banking-App scannen."))
 
     if timesheet:
         pdf.add_page()
-        pdf.font(14, True)
+        pdf.font(14, True, accent if layout["title_accent"] else INK)
         pdf.cell(WIDTH, 8, t("Leistungsnachweis"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.font(8.5, False, MUTED)
         pdf.cell(WIDTH, 5, t("Anlage zu %(title)s", title=title) + (f" · {_period(doc)}" if _period(doc) else ""), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -322,8 +433,8 @@ def render(doc, draft=False, timesheet=None, xml=None):
         sheet_columns = [(t("Datum"), 22, "L"), (t("Zeit"), 24, "L"), (t("Dauer"), 16, "R"), (t("Projekt"), 40, "L"), (t("Tätigkeit"), 68, "L")]
 
         def sheet_header():
-            pdf.font(8, True, MUTED)
-            pdf.set_fill_color(244, 246, 250)
+            pdf.font(8, True, accent if layout["table_accent"] else MUTED)
+            pdf.set_fill_color(*(head_fill if layout["table_accent"] else (244, 246, 250)))
             for label, width, align in sheet_columns:
                 pdf.cell(width, 6.5, label, align=align, fill=True)
             pdf.ln(6.5)
@@ -334,7 +445,7 @@ def render(doc, draft=False, timesheet=None, xml=None):
             pdf.font(8.5)
             note_lines = pdf.multi_cell(68, 4.2, row["note"] or "–", dry_run=True, output="LINES") if row["note"] else ["–"]
             height = max(1, len(note_lines)) * 4.2 + 1.6
-            if pdf.get_y() + height > 297 - 34:
+            if pdf.get_y() + height > pdf.bottom:
                 pdf.add_page()
                 sheet_header()
             top = pdf.get_y() + 0.8

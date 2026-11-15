@@ -70,6 +70,7 @@
           <label>{{ _('Fällig am') }} <span class="hint">{{ _('leer = Rechnungsdatum +') }} {{ customer.payment_days if customer and customer.payment_days is not none else settings.payment_days }} {{ _('Tage') }}</span><input type="date" name="due_date" value="{{ invoice.due_date or '' }}"></label>
           <label>{{ _('Käuferreferenz / Leitweg-ID') }} <span class="hint">{{ _('z. B. Bestellnummer; bei Behörden Pflicht') }}</span><input name="buyer_reference" maxlength="100" value="{{ invoice.buyer_reference }}"></label>
         </div>
+        <label>{{ _('Anrede') }} <span class="hint">{{ _('z. B. „Sehr geehrter Herr Zwisler,“') }}</span><input name="salutation" maxlength="200" value="{{ invoice.salutation }}"></label>
         <label>{{ _('Kopftext') }}<textarea name="intro" rows="2">{{ invoice.intro }}</textarea></label>
         <label>{{ _('Fußtext') }} <span class="hint">{{ _('Platzhalter: {faellig} {nummer} {betrag} {tage}') }}</span><textarea name="footer" rows="2">{{ invoice.footer }}</textarea></label>
         <label>{{ _('Grußformel') }}<input name="closing" maxlength="300" value="{{ invoice.closing }}"></label>

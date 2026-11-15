@@ -57,6 +57,21 @@ class BillingTests(unittest.TestCase):
         self.assertFalse(valid_iban("DE02120300000000202052"))
 
 
+class GiroCodeTests(unittest.TestCase):
+    def test_epc_payload(self):
+        seller = {"company": "across design", "account_holder": "", "iban": "DE57 1001 1001 2627 6699 09", "bic": "NTSBDEB1XXX"}
+        payload = billing.epc_payload(seller, 321300, "R-2623-4")
+        self.assertEqual(payload.split("\n"), ["BCD", "002", "1", "SCT", "NTSBDEB1XXX", "across design", "DE57100110012627669909",
+                                               "EUR3213.00", "", "", "R-2623-4"])
+        self.assertIsNone(billing.epc_payload({"company": "x", "iban": ""}, 100, "x"))
+        self.assertIsNone(billing.epc_payload(seller, 0, "x"))
+
+    def test_layout_values_are_validated(self):
+        layout = billing.layout_values('{"font": "comic", "accent": "red", "logo_height": 99, "girocode": "yes", "fold_marks": true}')
+        self.assertEqual((layout["font"], layout["accent"], layout["logo_height"], layout["girocode"], layout["fold_marks"]),
+                         ("dmsans", "#2f55c9", 40, True, True))
+
+
 class InvoiceFlowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -193,6 +208,39 @@ class InvoiceFlowTests(unittest.TestCase):
         self.assertTrue(pdf.startswith(b"%PDF") and b"en-GB" in pdf)
         xml = self.client.get(f"/rechnungen/{invoice_id}/zugferd.xml").data.decode()
         self.assertIn("Payable by", xml)
+
+    def test_layout_editor_logo_and_preview(self):
+        import io
+        from PIL import Image
+        self.enable()
+        self.assertEqual(self.client.get("/rechnungen/layout").status_code, 200)
+        form = {"font": "anuphan", "accent": "#d0342c", "logo_position": "left", "logo_height": "20", "fold_marks": "1",
+                "girocode": "1", "footer": "1", "footer_owner": "1", "salutation": "1", "signature": "1", "page_numbers": "1"}
+        preview = self.client.post("/rechnungen/layout/vorschau", data=form)
+        self.assertEqual(preview.mimetype, "application/pdf")
+        self.assertEqual(preview.headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertNotIn("anuphan", self.store.invoice_settings(1)["layout"].lower())
+        self.client.post("/rechnungen/layout", data=form)
+        layout = billing.layout_values(self.store.invoice_settings(1)["layout"])
+        self.assertEqual((layout["font"], layout["accent"], layout["header_text"], layout["fold_marks"]), ("anuphan", "#d0342c", False, True))
+        image = Image.new("RGBA", (400, 200), (0, 0, 0, 0))
+        image.paste((30, 30, 30, 255), (50, 50, 350, 150))
+        buffer = io.BytesIO(); image.save(buffer, format="PNG"); buffer.seek(0)
+        self.client.post("/rechnungen/layout/logo", data={"logo": (buffer, "logo.png")}, content_type="multipart/form-data")
+        with Image.open(Path(self.temp.name, "branding", "1", "logo.png")) as stored:
+            self.assertEqual((stored.mode, stored.size), ("RGB", (300, 100)))
+        bad = self.client.post("/rechnungen/layout/logo", data={"logo": (io.BytesIO(b"<svg/>"), "x.svg")},
+                               content_type="multipart/form-data", follow_redirects=True)
+        self.assertIn("PNG, JPG".encode(), bad.data)
+        with self.store.connect() as connection:
+            connection.execute("UPDATE customers SET salutation = 'Sehr geehrter Herr Zwisler,'")
+        invoice_id = self.draft()
+        self.assertEqual(self.store.invoice(1, invoice_id)["salutation"], "Sehr geehrter Herr Zwisler,")
+        self.client.post(f"/rechnungen/{invoice_id}", data={"action": "finalize"})
+        pdf = self.client.get(f"/rechnungen/{invoice_id}/pdf").data
+        self.assertTrue(pdf.startswith(b"%PDF") and b"factur-x.xml" in pdf)
+        self.client.post("/rechnungen/layout/logo", data={"action": "delete"})
+        self.assertFalse(Path(self.temp.name, "branding", "1", "logo.png").exists())
 
     def test_small_business_and_reverse_charge(self):
         self.enable()

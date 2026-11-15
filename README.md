@@ -21,6 +21,8 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
   - Fortlaufender Nummernkreis (z. B. `RE-{JJJJ}-{NNN}`, optional jährlich neu), Nummer erst beim Abschließen
   - Abgeschlossene Rechnungen sind unveränderlich: Absender- und Kundendaten werden eingefroren, das PDF wird mit SHA-256 im Datenvolume archiviert (`/data/invoices`), abgerechnete Zeiten werden gesperrt
   - Status offen/bezahlt/überfällig, Storno per Stornorechnung (gibt die Zeiten wieder frei)
+  - **Layout im Browser anpassen** mit Live-Vorschau: Logo-Upload, Schrift (DM Sans, Anuphan, IBM Plex Sans, Inter, Source Serif), Akzentfarbe, Logo-Position und -Größe, Falzmarken, Absenderzeile, Infoblock, persönliche Anrede je Kunde, Signatur, Fußzeile mit Adresse/Kontakt/Steuer/Bank, Seitenzahlen
+  - **GiroCode** (EPC-QR) zum Bezahlen per Banking-App
 - **Für Angestellte oder freiberuflich**: Soll, Überstundensaldo, Resturlaub und Abwesenheiten lassen sich pro Konto abschalten. Dann zählt Stempeln nur Stunden je Projekt.
 - **Automatische Erfassung**
   - *Gerät im Heimnetz*: Stempeln pingt jede Minute deinen Arbeitslaptop (oder prüft einen TCP-Port). Ist er online, läuft die Zeit. Ist er länger als die Leerlaufzeit weg, endet der Eintrag zum letzten Kontakt.

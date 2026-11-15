@@ -75,6 +75,7 @@ def build_doc(invoice, items=None, settings=None, customer=None):
     items = item_dicts(items if items is not None else store().invoice_items(invoice["id"]))
     if invoice["status"] != "draft":
         seller, buyer, mode = json.loads(invoice["seller_json"]), json.loads(invoice["buyer_json"]), invoice["tax_mode"]
+        settings = settings if settings and settings.get("user_id") == invoice["user_id"] else None
     else:
         settings = settings or store().invoice_settings(current_user.uid)
         customer = customer or (store().customer(current_user.uid, invoice["customer_id"]) if invoice["customer_id"] else {}) or {}
@@ -91,6 +92,9 @@ def build_doc(invoice, items=None, settings=None, customer=None):
         "buyer_reference": invoice["buyer_reference"], "notes": [], "preceding": preceding,
         "seller": seller, "buyer": buyer, "items": items, "tax_mode": mode,
         "intro": invoice["intro"], "closing": invoice["closing"], "language": invoice["language"],
+        "salutation": invoice.get("salutation") or "",
+        "layout": billing.layout_values(settings["layout"] if settings else store().invoice_layout(invoice["user_id"])),
+        "logo": logo_path(invoice["user_id"]),
     }
     language = invoice["language"]
     days = (doc["due_date"] - doc["issue_date"]).days if doc["due_date"] else 0
@@ -100,6 +104,21 @@ def build_doc(invoice, items=None, settings=None, customer=None):
         doc["payment_terms"] = _("Zahlbar bis %(date)s ohne Abzug.", language, date=i18n.fmt_date(doc["due_date"], language))
     doc["notes"] = [note for note in (doc["intro"], doc["footer"]) if note]
     return doc, summary
+
+
+def branding_dir(user_id):
+    path = Path(current_app.config["DATA_DIR"]) / "branding" / str(user_id)
+    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    return path
+
+
+def logo_path(user_id):
+    path = Path(current_app.config["DATA_DIR"]) / "branding" / str(user_id) / "logo.png"
+    return path if path.exists() else None
+
+
+def default_salutation(customer, language):
+    return (customer or {}).get("salutation") or _("Sehr geehrte Damen und Herren,", language)
 
 
 def timesheet_rows(invoice):
@@ -189,7 +208,8 @@ def finalize(invoice_id):
         due = None if invoice["type_code"] == "381" else (billing.as_date(invoice["due_date"]) or issue_day + timedelta(days=days))
         invoice.update(number=number, status="open", seller_json=json.dumps(seller), buyer_json=json.dumps(buyer),
                        tax_mode=mode, due_date=due.isoformat() if due else None)
-        doc, _ignored = build_doc(invoice, [dict(item, quantity=str(item["quantity"]), vat_rate=str(item["vat_rate"])) for item in items])
+        doc, _ignored = build_doc(invoice, [dict(item, quantity=str(item["quantity"]), vat_rate=str(item["vat_rate"])) for item in items],
+                                  settings)
         sheet = timesheet_rows(invoice) if invoice["timesheet"] else None
         pdf, _ignored = invoice_pdf.render_final(doc, sheet)
         written = archive_dir(current_user.uid) / f"{safe_filename(number)}.pdf"
@@ -278,9 +298,10 @@ def create_invoice():
     with store().connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         invoice_id = connection.execute(
-            "INSERT INTO invoices (user_id, customer_id, issue_date, service_from, service_to, buyer_reference, intro, footer, closing, "
-            "timesheet, language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO invoices (user_id, customer_id, issue_date, service_from, service_to, buyer_reference, salutation, intro, footer, "
+            "closing, timesheet, language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (current_user.uid, customer["id"], today().isoformat(), first.isoformat(), last.isoformat(), customer["leitweg_id"],
+             default_salutation(customer, language),
              text(settings["intro"], billing.DEFAULT_INTRO), text(settings["footer"], billing.DEFAULT_FOOTER),
              text(settings["closing"], billing.DEFAULT_CLOSING), 0 if mode == "empty" else settings["timesheet"], language,
              int(time.time()))).lastrowid
@@ -316,9 +337,10 @@ def invoice(invoice_id):
                 with store().connect() as connection:
                     connection.execute(
                         "UPDATE invoices SET issue_date = ?, service_from = ?, service_to = ?, due_date = ?, buyer_reference = ?, "
-                        "intro = ?, footer = ?, closing = ?, timesheet = ? WHERE id = ?",
+                        "salutation = ?, intro = ?, footer = ?, closing = ?, timesheet = ? WHERE id = ?",
                         (issue.isoformat(), first.isoformat() if first else None, last.isoformat() if last else None,
                          due.isoformat() if due else None, clean(request.form.get("buyer_reference"), 100),
+                         clean(request.form.get("salutation"), 200),
                          request.form.get("intro", "").strip()[:2000], request.form.get("footer", "").strip()[:2000],
                          request.form.get("closing", "").strip()[:300], 1 if request.form.get("timesheet") else 0, invoice_id))
                 flash(_("Rechnungsdaten gespeichert."), "success")
@@ -484,7 +506,7 @@ def customers():
     if request.method == "POST":
         customer_id = request.form.get("customer_id", type=int)
         values = {key: clean(request.form.get(key), 120) for key in
-                  ("number", "name", "contact", "street", "zip", "city", "email", "vat_id", "leitweg_id")}
+                  ("number", "name", "contact", "street", "zip", "city", "email", "vat_id", "leitweg_id", "salutation")}
         values["country"] = clean(request.form.get("country"), 2).upper() or "DE"
         values["tax_mode"] = request.form.get("tax_mode", "domestic")
         values["language"] = request.form.get("language", "de")
@@ -610,6 +632,98 @@ def invoice_settings():
         "invoice_settings.html", settings=settings, DEFAULT_INTRO=billing.DEFAULT_INTRO, DEFAULT_FOOTER=billing.DEFAULT_FOOTER,
         preview=billing.format_number(settings["number_format"], counter, preview_day),
     )
+
+
+# ------------------------------------------------------------------ Layout
+
+def sample_doc(settings, layout):
+    """Beispielrechnung für die Live-Vorschau: echte Absenderdaten, Beispielkunde und -positionen."""
+    from decimal import Decimal as D
+    language = i18n.current()
+    customer = next((c for c in store().customers(current_user.uid, include_archived=False) if c["street"]), None)
+    buyer = billing.snapshot_buyer(customer or {"number": "K-1001", "name": "Muster GmbH", "contact": "", "street": "Beispielweg 1",
+                                                "zip": "80331", "city": "München", "country": "DE"})
+    seller = billing.snapshot_seller(settings)
+    seller["company"] = seller["company"] or _("Deine Firma")
+    rate = D("0") if settings["vat_mode"] == "small_business" else D(settings["default_vat_rate"])
+    items = [{"description": _("Konstruktion und Entwurf"), "detail": _("Beispielposition aus erfassten Zeiten"),
+              "quantity": D("3"), "unit": "DAY", "price_cents": 90000, "vat_rate": rate},
+             {"description": _("Abstimmung"), "detail": "", "quantity": D("2.5"), "unit": "HUR", "price_cents": 11250, "vat_rate": rate}]
+    for item in items:
+        item["line_cents"] = billing.line_cents(item["quantity"], item["price_cents"])
+    issue = today()
+    mode = billing.tax_mode(settings, customer or {})
+    doc = {"number": "RE-0000", "type_code": "380", "issue_date": issue, "due_date": issue + timedelta(days=settings["payment_days"]),
+           "service_from": issue.replace(day=1), "service_to": issue, "buyer_reference": "", "preceding": None,
+           "seller": seller, "buyer": buyer, "items": items, "tax_mode": mode, "language": language,
+           "salutation": default_salutation(customer, language), "closing": _(billing.DEFAULT_CLOSING) if settings["closing"] in ("", billing.DEFAULT_CLOSING) else settings["closing"],
+           "layout": layout, "logo": logo_path(current_user.uid)}
+    summary = billing.totals(items, mode)
+    doc["intro"] = billing.fill_placeholders(settings["intro"] or _(billing.DEFAULT_INTRO), doc, summary["gross"], settings["payment_days"], language)
+    doc["footer"] = billing.fill_placeholders(settings["footer"] or _(billing.DEFAULT_FOOTER), doc, summary["gross"], settings["payment_days"], language)
+    return doc
+
+
+@bp.route("/rechnungen/layout", methods=["GET", "POST"])
+@invoicing_required
+def invoice_layout():
+    settings = store().invoice_settings(current_user.uid)
+    if request.method == "POST":
+        layout = billing.layout_from_form(request.form)
+        store().update_invoice_settings(current_user.uid, layout=json.dumps(layout))
+        flash(_("Rechnungslayout gespeichert."), "success")
+        return redirect(url_for("invoicing.invoice_layout"))
+    return render_template("invoice_layout.html", layout=billing.layout_values(settings["layout"]), fonts=billing.PDF_FONTS,
+                           logo_positions=billing.LOGO_POSITIONS, has_logo=logo_path(current_user.uid) is not None,
+                           defaults=billing.LAYOUT_DEFAULTS, settings=settings)
+
+
+@bp.route("/rechnungen/layout/vorschau", methods=["GET", "POST"])
+@invoicing_required
+def invoice_layout_preview():
+    settings = store().invoice_settings(current_user.uid)
+    layout = billing.layout_from_form(request.form) if request.form.get("font") else billing.layout_values(settings["layout"])
+    pdf = invoice_pdf.render(sample_doc(settings, layout), draft=False)
+    return Response(pdf, mimetype="application/pdf", headers={"Content-Disposition": 'inline; filename="vorschau.pdf"'})
+
+
+@bp.post("/rechnungen/layout/logo")
+@invoicing_required
+def invoice_logo():
+    from PIL import Image, UnidentifiedImageError
+    target = branding_dir(current_user.uid) / "logo.png"
+    if request.form.get("action") == "delete":
+        target.unlink(missing_ok=True)
+        flash(_("Logo entfernt."), "success")
+        return redirect(url_for("invoicing.invoice_layout"))
+    upload = request.files.get("logo")
+    try:
+        with Image.open(upload.stream) as image:
+            if image.format not in ("PNG", "JPEG", "WEBP", "GIF"):
+                raise UnidentifiedImageError()
+            image.thumbnail((1600, 800))
+            image = image.convert("RGBA")
+            # PDF/A-sicher: Transparenz auf weißem Hintergrund flach rechnen
+            flat = Image.new("RGB", image.size, (255, 255, 255))
+            flat.paste(image, mask=image.getchannel("A"))
+            box = flat.point(lambda value: 255 - value).getbbox()
+            if box:
+                flat = flat.crop(box)
+            flat.save(target, format="PNG", optimize=True)
+            target.chmod(0o600)
+        flash(_("Logo gespeichert."), "success")
+    except (AttributeError, OSError, UnidentifiedImageError, ValueError):
+        flash(_("Bitte ein Bild als PNG, JPG, WebP oder GIF hochladen (max. 4 MB)."), "error")
+    return redirect(url_for("invoicing.invoice_layout"))
+
+
+@bp.get("/rechnungen/layout/logo.png")
+@invoicing_required
+def invoice_logo_file():
+    path = logo_path(current_user.uid)
+    if not path:
+        abort(404)
+    return send_file(path, mimetype="image/png", max_age=0)
 
 
 def valid_iban(iban):

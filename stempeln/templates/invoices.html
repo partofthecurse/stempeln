@@ -6,6 +6,7 @@
   <div class="heading-actions">
     {% if years %}<form method="get" class="filter-form"><select name="jahr" aria-label="{{ _('Jahr') }}" data-autosubmit><option value="">{{ _('Alle Jahre') }}</option>{% for y in years %}<option value="{{ y }}" {% if year and y | int == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select><noscript><button class="secondary-button" type="submit">{{ _('Filtern') }}</button></noscript></form>{% endif %}
     <a class="secondary-button" href="{{ url_for('invoicing.customers') }}">{{ _('Kunden') }}</a>
+    <a class="secondary-button" href="{{ url_for('invoicing.invoice_layout') }}">{{ _('Layout & Logo') }}</a>
     <a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">{{ _('Einstellungen') }}</a>
   </div>
 </div>

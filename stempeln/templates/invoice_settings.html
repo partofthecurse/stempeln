@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-heading split">
   <div><span class="eyebrow">{{ _('RECHNUNGEN') }}</span><h1>{{ _('Einstellungen') }}<span class="accent">.</span></h1><p>{{ _('Absender, Steuer, Bank, Nummernkreis und Standardtexte') }}</p></div>
-  <div class="heading-actions"><a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">{{ _('‹ Rechnungen') }}</a></div>
+  <div class="heading-actions"><a class="secondary-button" href="{{ url_for('invoicing.invoice_layout') }}">{{ _('Layout & Logo') }}</a><a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">{{ _('‹ Rechnungen') }}</a></div>
 </div>
 <form method="post" class="settings-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

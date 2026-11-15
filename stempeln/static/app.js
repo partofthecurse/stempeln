@@ -53,3 +53,16 @@ document.querySelectorAll('select[data-toggle-day]').forEach(select => {
 document.querySelectorAll('select[data-autosubmit]').forEach(select => {
   select.addEventListener('change', () => select.form.submit());
 });
+
+// Rechnungslayout: Live-Vorschau bei jeder Änderung (verzögert), ohne zu speichern
+const layoutForm = document.getElementById('layout-form');
+const previewButton = document.getElementById('preview-button');
+if (layoutForm && previewButton) {
+  let timer;
+  const refresh = () => { clearTimeout(timer); timer = setTimeout(() => layoutForm.requestSubmit(previewButton), 500); };
+  layoutForm.addEventListener('input', event => {
+    if (event.target.type === 'color') event.target.nextElementSibling.textContent = event.target.value;
+    refresh();
+  });
+  layoutForm.addEventListener('change', refresh);
+}

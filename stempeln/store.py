@@ -227,6 +227,12 @@ class Store:
             connection.execute("ALTER TABLE customers ADD COLUMN language TEXT NOT NULL DEFAULT 'de'")
         if "language" not in columns("invoices"):
             connection.execute("ALTER TABLE invoices ADD COLUMN language TEXT NOT NULL DEFAULT 'de'")
+        if "salutation" not in columns("invoices"):
+            connection.execute("ALTER TABLE invoices ADD COLUMN salutation TEXT NOT NULL DEFAULT ''")
+        if "salutation" not in columns("customers"):
+            connection.execute("ALTER TABLE customers ADD COLUMN salutation TEXT NOT NULL DEFAULT ''")
+        if "layout" not in columns("invoice_settings"):
+            connection.execute("ALTER TABLE invoice_settings ADD COLUMN layout TEXT NOT NULL DEFAULT '{}'")
         if "invoice_id" not in columns("entries"):
             connection.execute("ALTER TABLE entries ADD COLUMN invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL")
         connection.execute("CREATE INDEX IF NOT EXISTS entries_invoice ON entries(invoice_id)")
@@ -401,6 +407,12 @@ class Store:
         with self.connect() as connection:
             connection.execute("INSERT OR IGNORE INTO invoice_settings (user_id) VALUES (?)", (user_id,))
             return dict(connection.execute("SELECT * FROM invoice_settings WHERE user_id = ?", (user_id,)).fetchone())
+
+    def invoice_layout(self, user_id):
+        """Nur lesend (auch während einer laufenden Schreibtransaktion nutzbar)."""
+        with self.connect() as connection:
+            row = connection.execute("SELECT layout FROM invoice_settings WHERE user_id = ?", (user_id,)).fetchone()
+        return row["layout"] if row else "{}"
 
     def update_invoice_settings(self, user_id, **values):
         self.invoice_settings(user_id)

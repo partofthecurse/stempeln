@@ -102,7 +102,7 @@ def create_app(test_config=None):
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.getenv("SESSION_DAYS", "14"))),
-        MAX_CONTENT_LENGTH=64 * 1024,
+        MAX_CONTENT_LENGTH=4 * 1024 * 1024,  # Logo-Upload; alle anderen Formulare sind klein
         ENABLE_MONITOR=os.getenv("ENABLE_MONITOR", "true").lower() == "true",
         MONITOR_INTERVAL=max(20, int(os.getenv("MONITOR_INTERVAL_SECONDS", "60"))),
     )
@@ -249,9 +249,14 @@ def create_app(test_config=None):
     @app.after_request
     def security_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+        if response.mimetype == "application/pdf":
+            # Browser-PDF-Viewer brauchen Plugins/Skripte; PDFs dürfen nur von Stempeln selbst eingebettet werden
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = "frame-ancestors 'self'"
+        else:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         response.headers.setdefault("Cache-Control", "no-store")
         return response
 

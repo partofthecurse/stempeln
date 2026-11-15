@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}{{ _('Rechnungslayout') }}{% endblock %}
+{% macro flag(name, label, hint='') -%}
+<label class="check"><input type="checkbox" name="{{ name }}" value="1" {% if layout[name] %}checked{% endif %}> <span>{{ label }}{% if hint %}<br><span class="hint">{{ hint }}</span>{% endif %}</span></label>
+{%- endmacro %}
+{% block content %}
+<div class="page-heading split">
+  <div><span class="eyebrow">{{ _('RECHNUNGEN') }}</span><h1>{{ _('Rechnungslayout') }}<span class="accent">.</span></h1><p>{{ _('Logo, Schrift, Farbe und Elemente der Rechnung – rechts siehst du sofort das Ergebnis.') }}</p></div>
+  <div class="heading-actions"><a class="secondary-button" href="{{ url_for('invoicing.invoice_settings') }}">{{ _('Einstellungen') }}</a><a class="secondary-button" href="{{ url_for('invoicing.invoices') }}">{{ _('‹ Rechnungen') }}</a></div>
+</div>
+<div class="layout-editor">
+  <div class="stack">
+    <section class="card">
+      <span class="section-label">{{ _('LOGO') }}</span>
+      {% if has_logo %}<img class="logo-preview" src="{{ url_for('invoicing.invoice_logo_file') }}" alt="{{ _('Aktuelles Logo') }}">{% endif %}
+      <form method="post" action="{{ url_for('invoicing.invoice_logo') }}" enctype="multipart/form-data" class="form-stack logo-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>{{ _('Logo hochladen') }} <span class="hint">{{ _('PNG, JPG, WebP oder GIF, max. 4 MB – Ränder werden automatisch beschnitten') }}</span><input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/gif" required></label>
+        <div class="form-actions"><button class="secondary-button" type="submit">{{ _('Hochladen') }}</button></div>
+      </form>
+      {% if has_logo %}<form method="post" action="{{ url_for('invoicing.invoice_logo') }}" data-confirm="{{ _('Logo entfernen?') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete"><button class="text-button danger" type="submit">{{ _('Logo entfernen') }}</button></form>{% endif %}
+    </section>
+    <form method="post" class="stack" id="layout-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <section class="card">
+        <span class="section-label">{{ _('GESTALTUNG') }}</span>
+        <div class="form-stack">
+          <div class="field-row">
+            <label>{{ _('Schrift') }}<select name="font">{% for key, name in fonts.items() %}<option value="{{ key }}" {% if layout.font == key %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+            <label>{{ _('Akzentfarbe') }}<span class="color-field"><input type="color" name="accent" value="{{ layout.accent }}"><code>{{ layout.accent }}</code></span></label>
+          </div>
+          <div class="field-row">
+            <label>{{ _('Logo-Position') }}<select name="logo_position">{% for key, name in logo_positions.items() %}<option value="{{ key }}" {% if layout.logo_position == key %}selected{% endif %}>{{ _(name) }}</option>{% endfor %}</select></label>
+            <label>{{ _('Logo-Höhe') }} <span class="hint">mm</span><input type="number" name="logo_height" min="8" max="40" value="{{ layout.logo_height }}"></label>
+          </div>
+          {{ flag('title_accent', _('Überschrift in Akzentfarbe')) }}
+          {{ flag('table_accent', _('Tabellenkopf in Akzentfarbe')) }}
+        </div>
+      </section>
+      <section class="card">
+        <span class="section-label">{{ _('KOPF & ANSCHRIFT') }}</span>
+        <div class="form-stack">
+          {{ flag('header_text', _('Firmenname und Kontakt oben rechts'), _('Mit Logo oft verzichtbar – die Angaben stehen auch in der Fußzeile.')) }}
+          {{ flag('sender_line', _('Absenderzeile über der Anschrift (für Fensterumschläge)')) }}
+          {{ flag('address_country', _('Land auch bei deutschen Kunden angeben')) }}
+          {{ flag('fold_marks', _('Falz- und Lochmarken am linken Rand')) }}
+        </div>
+      </section>
+      <section class="card">
+        <span class="section-label">{{ _('INFOBLOCK') }}</span>
+        <div class="form-stack">
+          {{ flag('info_customer_number', _('Kundennummer')) }}
+          {{ flag('info_contact', _('Ansprechpartner (aus den Einstellungen)')) }}
+          {{ flag('info_due_date', _('Fälligkeitsdatum')) }}
+        </div>
+      </section>
+      <section class="card">
+        <span class="section-label">{{ _('TEXT & ZAHLUNG') }}</span>
+        <div class="form-stack">
+          {{ flag('salutation', _('Anrede vor dem Kopftext'), _('Je Kunde einstellbar, sonst „Sehr geehrte Damen und Herren,“.')) }}
+          {{ flag('signature', _('Name des Ansprechpartners unter der Grußformel')) }}
+          {{ flag('girocode', _('GiroCode zum Bezahlen per Banking-App'), _('QR-Code nach EPC-Standard mit Empfänger, IBAN, Betrag und Rechnungsnummer.')) }}
+        </div>
+      </section>
+      <section class="card">
+        <span class="section-label">{{ _('FUSSZEILE') }}</span>
+        <div class="form-stack">
+          {{ flag('footer', _('Fußzeile mit Adresse, Kontakt, Steuer- und Bankdaten')) }}
+          {{ flag('footer_owner', _('„Inhaber/-in“ mit Ansprechpartner in der Fußzeile')) }}
+          {{ flag('page_numbers', _('Seitenzahlen')) }}
+        </div>
+      </section>
+      <div class="layout-actions">
+        <button class="primary-button" type="submit">{{ _('Layout speichern') }} <span>→</span></button>
+        <button class="secondary-button" type="submit" id="preview-button" formaction="{{ url_for('invoicing.invoice_layout_preview') }}" formtarget="layout-preview">{{ _('Vorschau aktualisieren') }}</button>
+      </div>
+      {% if not settings.company %}<p class="hint">{{ _('Tipp: Trag zuerst deine Absenderdaten in den Einstellungen ein, dann zeigt die Vorschau deine echten Angaben.') }}</p>{% endif %}
+    </form>
+  </div>
+  <section class="card preview-card">
+    <div class="section-heading"><span class="section-label">{{ _('VORSCHAU') }}</span><a class="text-link" href="{{ url_for('invoicing.invoice_layout_preview') }}" target="_blank" rel="noopener">{{ _('In neuem Tab öffnen ↗') }}</a></div>
+    <iframe name="layout-preview" class="layout-preview" src="{{ url_for('invoicing.invoice_layout_preview') }}" title="{{ _('Vorschau der Rechnung') }}"></iframe>
+    <p class="hint">{{ _('Beispielrechnung mit deinen Absenderdaten. Änderungen erscheinen automatisch; gespeichert wird erst mit „Layout speichern“.') }}</p>
+  </section>
+</div>
+{% endblock %}
