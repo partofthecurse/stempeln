@@ -337,6 +337,40 @@ class Store:
     CUSTOMER_COLUMNS = ("SELECT customers.*, owners.username AS owner_name FROM customers "
                         "JOIN users AS owners ON owners.id = customers.user_id ")
 
+    def transfer(self, user_id, project_ids, customer_ids, keep_access=True):
+        """Überträgt Projekte und Kunden an user_id. Kunden übertragener Projekte gehen mit, wenn sie demselben
+        bisherigen Besitzer gehören. Bisherige Besitzer behalten auf Wunsch (und immer bei vorhandenen Rechnungen)
+        Zugriff per Freigabe. Erfasste Zeiten und Rechnungen bleiben unverändert bei ihren Benutzern."""
+        def placeholders(values):
+            return ",".join("?" * len(values)) or "NULL"
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            projects = [dict(row) for row in connection.execute(
+                f"SELECT id, name, user_id, customer_id FROM projects WHERE user_id != ? AND id IN ({placeholders(project_ids)})",
+                (user_id, *project_ids))]
+            explicit = set(customer_ids)
+            customer_ids = explicit | {p["customer_id"] for p in projects if p["customer_id"]}
+            customers = [dict(row) for row in connection.execute(
+                f"SELECT id, name, user_id FROM customers WHERE user_id != ? AND id IN ({placeholders(customer_ids)})",
+                (user_id, *customer_ids))]
+            # Kunden eines übertragenen Projekts nur mitnehmen, wenn sie dem bisherigen Projektbesitzer gehören oder ausgewählt sind
+            owners = {p["customer_id"]: p["user_id"] for p in projects if p["customer_id"]}
+            customers = [c for c in customers if c["id"] in explicit or owners.get(c["id"]) == c["user_id"]]
+            for kind, items in (("project", projects), ("customer", customers)):
+                table = kind + "s"
+                for item in items:
+                    try:
+                        connection.execute(f"UPDATE {table} SET user_id = ? WHERE id = ?", (user_id, item["id"]))
+                    except sqlite3.IntegrityError:
+                        raise ValueError(item["name"]) from None
+                    connection.execute(f"DELETE FROM {kind}_shares WHERE {kind}_id = ? AND user_id = ?", (item["id"], user_id))
+                    has_invoices = kind == "customer" and connection.execute(
+                        "SELECT 1 FROM invoices WHERE customer_id = ? AND user_id = ?", (item["id"], item["user_id"])).fetchone()
+                    if keep_access or has_invoices:
+                        connection.execute(f"INSERT OR IGNORE INTO {kind}_shares ({kind}_id, user_id) VALUES (?, ?)",
+                                           (item["id"], item["user_id"]))
+        return projects, customers
+
     def customers(self, user_id, include_archived=True):
         query = self.CUSTOMER_COLUMNS + "WHERE " + self.CUSTOMER_ACCESS + ("" if include_archived else " AND customers.archived = 0")
         with self.connect() as connection:

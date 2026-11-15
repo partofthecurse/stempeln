@@ -69,6 +69,32 @@ class ShareTests(unittest.TestCase):
         self.assertEqual(self.daniel.get("/users").status_code, 403)
         self.assertEqual(self.daniel.post("/users/2/freigaben", data={"project_id": [str(self.ids["Intern"])]}).status_code, 403)
 
+    def test_transfer_moves_project_and_customer(self):
+        self.daniel.post("/entries", data={"day": "2026-10-05", "start": "09:00", "end": "11:00"})
+        self.admin.post("/entries", data={"day": "2026-10-05", "start": "09:00", "end": "10:00", "project_id": self.ids["FireBug"]})
+        page = self.admin.post("/users/2/uebertragen", data={"project_id": [str(self.ids["FireBug"])], "keep_access": "1"},
+                               follow_redirects=True).data.decode()
+        self.assertIn("1 Projekt(e), 1 Kunde(n)", page)
+        project = self.store.project(2, self.ids["FireBug"])
+        self.assertEqual((project["user_id"], project["shared"]), (2, False))
+        self.assertEqual([(c["name"], c["shared"]) for c in self.store.customers(2)], [("Kantensprung", False)])
+        # Admin behält Zugriff als Freigabe, seine Zeiten bleiben bei ihm
+        self.assertTrue(self.store.project(1, self.ids["FireBug"])["shared"])
+        self.assertEqual(len(self.store.entries_between(1, 0, 2 ** 40)), 1)
+        # Daniel kann jetzt löschen
+        self.daniel.post(f"/projekte/{self.ids['FireBug']}/delete")
+        self.assertIsNone(self.store.project(2, self.ids["FireBug"]))
+
+    def test_transfer_without_access_and_name_conflict(self):
+        self.admin.post("/users/2/uebertragen", data={"project_id": [str(self.ids["Intern"])]})
+        self.assertIsNone(self.store.project(1, self.ids["Intern"]))
+        self.daniel.post("/projekte", data={"name": "FireBug", "color": "blue"})
+        response = self.admin.post("/users/2/uebertragen", data={"project_id": [str(self.ids["FireBug"])]}, follow_redirects=True)
+        self.assertIn("schon ein Projekt".encode(), response.data)
+        self.assertEqual(self.store.project(1, self.ids["FireBug"])["user_id"], 1)
+        self.assertEqual(self.store.customers(2), [])
+        self.assertEqual(self.daniel.post("/users/1/uebertragen", data={"project_id": [str(self.ids["FireBug"])]}).status_code, 403)
+
     def test_admin_page_renders(self):
         self.share("FireBug")
         page = self.admin.get("/users?freigaben=2").data.decode()

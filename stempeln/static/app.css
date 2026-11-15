@@ -273,3 +273,7 @@ details summary{list-style-position:inside}
 .share-list label.check{display:flex;gap:10px;align-items:flex-start;font-size:14px}
 .share-form .form-actions{margin-top:18px}
 .shared-tag{background:var(--ok-soft);color:var(--positive)}
+.transfer-form{margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}
+.transfer-form h3{margin-bottom:6px}
+.transfer-form .settings-layout{margin-top:14px}
+.keep-access{display:flex;gap:10px;align-items:center;margin-top:14px;font-size:14px}

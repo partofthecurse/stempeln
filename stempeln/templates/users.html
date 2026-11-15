@@ -32,6 +32,23 @@
     </div>
     <div class="form-actions"><button class="primary-button" type="submit">{{ _('Freigaben für %(user)s speichern', user=target.username) }} <span>→</span></button></div>
   </form>
+  <form method="post" action="{{ url_for('user_transfer', user_id=target.id) }}" class="share-form transfer-form" id="uebertragen" data-confirm="{{ _('Ausgewählte Projekte und Kunden an %(user)s übertragen?', user=target.username) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h3>{{ _('Besitz an %(user)s übertragen', user=target.username) }}</h3>
+    <p class="hint">{{ _('Der neue Besitzer kann sie auch löschen und selbst freigeben. Kunden übertragener Projekte gehen mit, wenn sie demselben Besitzer gehören. Erfasste Zeiten und Rechnungen bleiben bei ihren Benutzern.') }}</p>
+    <div class="settings-layout">
+      <fieldset class="share-list"><legend>{{ _('Projekte') }}</legend>
+        {% for p in all_projects if p.user_id != target.id %}<label class="check"><input type="checkbox" name="project_id" value="{{ p.id }}"> <span><strong>{{ p.name }}</strong>{% if p.customer_name %} · {{ p.customer_name }}{% endif %}<br><small class="muted">{{ _('von %(owner)s', owner=p.owner_name) }}</small></span></label>
+        {% else %}<p class="muted">{{ _('Keine Projekte anderer Benutzer vorhanden.') }}</p>{% endfor %}
+      </fieldset>
+      <fieldset class="share-list"><legend>{{ _('Kunden') }}</legend>
+        {% for c in all_customers if c.user_id != target.id %}<label class="check"><input type="checkbox" name="customer_id" value="{{ c.id }}"> <span><strong>{{ c.name }}</strong><br><small class="muted">{{ _('von %(owner)s', owner=c.owner_name) }}</small></span></label>
+        {% else %}<p class="muted">{{ _('Keine Kunden anderer Benutzer vorhanden.') }}</p>{% endfor %}
+      </fieldset>
+    </div>
+    <label class="check keep-access"><input type="checkbox" name="keep_access" value="1" checked> {{ _('Bisherige Besitzer behalten Zugriff (als Freigabe)') }}</label>
+    <div class="form-actions"><button class="secondary-button" type="submit">{{ _('An %(user)s übertragen', user=target.username) }}</button></div>
+  </form>
   {% endif %}
 </section>
 {% endblock %}

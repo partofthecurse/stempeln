@@ -32,7 +32,7 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
 - **Urlaub, Krankheit und freie Tage** inklusive halber Tage und Resturlaub
 - **Monatsübersicht**: Einträge nachtragen, korrigieren und löschen; CSV-Export, der sich direkt in Excel öffnen lässt
 - **Deutsch und Englisch**: Umschalter oben rechts (auch auf der Anmeldeseite), die Wahl wird pro Konto gespeichert; ohne Wahl gilt die Browsersprache. Zahlen-, Datums- und Betragsformate, Feiertagsnamen und die API-Textantworten folgen der Sprache. Rechnungen haben eine eigene Sprache je Kunde.
-- **Konten**: Admin und Benutzer, TOTP-2FA mit Wiederherstellungscodes und Login-Ratenbegrenzung. Jedes Konto sieht nur die eigenen Zeiten.
+- **Konten**: Admins können Projekte und Kunden für andere Benutzer freigeben oder den Besitz übertragen. Admin und Benutzer, TOTP-2FA mit Wiederherstellungscodes und Login-Ratenbegrenzung. Jedes Konto sieht nur die eigenen Zeiten.
 
 ## Installation
 
@@ -85,6 +85,24 @@ Mit `?format=text` kommt statt JSON nur ein lesbarer Satz zurück, z. B. `👋 A
 Optional `"project": "Name"` oder die Projekt-ID: `in` bzw. `toggle` mit Projekt startet dieses Projekt. Läuft gerade ein anderes, wird gewechselt (`"result": "switched"`). So kann jeder NFC-Tag ein eigenes Projekt haben. Für automatische Einträge (Gerät, Lebenszeichen) lässt sich unter **Automatik** ein Standardprojekt wählen.
 
 `GET /api/v1/status` liefert Status, heutige Nettozeit, Tagessoll und Saldo in Minuten, etwa für ein Home-Assistant-Dashboard. Fertige Beispiele für Home Assistant (`rest_command`) und die Agenten stehen in der App.
+
+### Optional: Start bei Bedarf mit Sablier
+
+Stempeln lässt sich mit [Sablier](https://sablier.app/) bei Bedarf starten bzw. pausieren. Dazu die Labels per `compose.override.yaml` ergänzen (wird von `docker compose` automatisch geladen):
+
+```yaml
+services:
+  stempeln:
+    labels:
+      - sablier.enable=true
+      - sablier.group=stempeln
+      - sablier.activity.enable=true
+      - sablier.activity.ports=8000
+    healthcheck:
+      interval: 5s
+```
+
+Alle Zugriffe (Browser, Home Assistant, Agenten) müssen dann über den Sablier-fähigen Proxy laufen, nicht direkt auf den Port – sonst weckt nichts den Container. Während Stempeln pausiert, läuft die Automatik „Gerät im Heimnetz“ nicht; Lebenszeichen-Einträge werden beim Aufwachen korrekt zum letzten Signal beendet.
 
 ## Konfiguration
 

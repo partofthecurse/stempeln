@@ -967,6 +967,28 @@ def create_app(test_config=None):
         return render_template("users.html", users=entries, target=target, all_projects=all_projects, all_customers=all_customers,
                                shared_projects=shared_projects, shared_customers=shared_customers)
 
+    @app.post("/users/<int:user_id>/uebertragen")
+    @admin_required
+    def user_transfer(user_id):
+        with store.connect() as connection:
+            user = connection.execute("SELECT username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            abort(404)
+        project_ids = {int(value) for value in request.form.getlist("project_id") if value.isdigit()}
+        customer_ids = {int(value) for value in request.form.getlist("customer_id") if value.isdigit()}
+        if not project_ids and not customer_ids:
+            flash(_("Bitte mindestens ein Projekt oder einen Kunden auswählen."), "error")
+        else:
+            try:
+                projects, customers = store.transfer(user_id, project_ids, customer_ids, keep_access=bool(request.form.get("keep_access")))
+            except ValueError as error:
+                flash(_("%(user)s hat schon ein Projekt oder einen Kunden namens „%(name)s“. Bitte vorher umbenennen.",
+                        user=user["username"], name=str(error)), "error")
+            else:
+                flash(_("An %(user)s übertragen: %(projects)s Projekt(e), %(customers)s Kunde(n).", user=user["username"],
+                        projects=len(projects), customers=len(customers)), "success")
+        return redirect(url_for("users", freigaben=user_id) + "#uebertragen")
+
     @app.post("/users/<int:user_id>/freigaben")
     @admin_required
     def user_shares(user_id):
