@@ -207,4 +207,4 @@ class Monitor:
                 except Exception:
                     log.exception("Monitor tick failed")
                 time.sleep(self.interval + random.uniform(0, 5))
-        threading.Thread(target=loop, daemon=True, name="stempel-monitor").start()
+        threading.Thread(target=loop, daemon=True, name="stempeln-monitor").start()

@@ -96,7 +96,7 @@ def create_app(test_config=None):
     os.umask(0o077)
     app = Flask(__name__)
     app.config.update(
-        DATA_DIR=os.getenv("STEMPEL_DATA_DIR", "/data"),
+        DATA_DIR=os.getenv("STEMPELN_DATA_DIR", "/data"),
         SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "false").lower() == "true",
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -112,8 +112,8 @@ def create_app(test_config=None):
     app.secret_key, cipher = load_keys(data_dir)
     store = Store(data_dir / "stempel.db")
     monitor = clock.Monitor(store, app.config["MONITOR_INTERVAL"])
-    app.extensions["stempel_store"] = store
-    app.extensions["stempel_monitor"] = monitor
+    app.extensions["stempeln_store"] = store
+    app.extensions["stempeln_monitor"] = monitor
     csrf = CSRFProtect(app)
     login_manager = LoginManager(app)
     login_manager.login_view = "login"
@@ -463,7 +463,7 @@ def create_app(test_config=None):
                         f"{rate / 100:.2f}".replace(".", ",") if rate else "",
                         f"{amount_cents(seconds, rate) / 100:.2f}".replace(".", ",") if rate else "", entry["note"],
                     ])
-            filename = f"stempel-eintraege-{first:%Y-%m}{suffix}.csv"
+            filename = f"stempeln-eintraege-{first:%Y-%m}{suffix}.csv"
             return Response("\ufeff" + output.getvalue(), mimetype="text/csv",
                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
         writer.writerow(["Datum", "Tag", "Zeiten", "Brutto", "Pausenabzug", "Netto", "Netto (h)", "Soll", "Differenz", "Hinweis", "Projekte", "Notizen"])
@@ -477,7 +477,7 @@ def create_app(test_config=None):
                 fmt_duration(report["deducted"]), fmt_duration(report["net"]), f"{report['net'] / 3600:.2f}".replace(".", ","),
                 fmt_duration(report["target"]), fmt_duration(report["diff"], signed=True), hint, project_names, notes,
             ])
-        filename = f"stempel-{first:%Y-%m}{suffix}.csv"
+        filename = f"stempeln-{first:%Y-%m}{suffix}.csv"
         return Response("﻿" + output.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
@@ -641,7 +641,7 @@ def create_app(test_config=None):
     @app.get("/automatik/agent/<system>")
     @login_required
     def agent_script(system):
-        files = {"windows": ("agent_windows.txt", "stempel-agent.ps1"), "unix": ("agent_unix.txt", "stempel-agent.sh")}
+        files = {"windows": ("agent_windows.txt", "stempeln-agent.ps1"), "unix": ("agent_unix.txt", "stempeln-agent.sh")}
         if system not in files:
             abort(404)
         template, filename = files[system]
@@ -835,7 +835,7 @@ def create_app(test_config=None):
         qr = secret = None
         if row["totp_pending"] and not row["totp_secret"]:
             secret = cipher.decrypt(row["totp_pending"].encode()).decode()
-            image = qrcode.make(pyotp.TOTP(secret).provisioning_uri(name=current_user.username, issuer_name="Stempel"))
+            image = qrcode.make(pyotp.TOTP(secret).provisioning_uri(name=current_user.username, issuer_name="Stempeln"))
             output = io.BytesIO()
             image.save(output, format="PNG")
             qr = base64.b64encode(output.getvalue()).decode()

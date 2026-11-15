@@ -6,7 +6,7 @@
   <span class="section-label">ARBEITSZEITMODELL</span><h2>Soll, Pausen & Feiertage</h2>
   <form method="post" class="form-stack model-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="model">
-    <label class="check"><input type="checkbox" name="track_balance" value="1" {% if profile.track_balance %}checked{% endif %}> <span><strong>Soll & Überstundensaldo erfassen</strong><br><span class="hint">Für Angestellte. Ausgeschaltet (z. B. freiberuflich) zählt Stempel nur Stunden je Projekt; Saldo, Soll, Resturlaub und Abwesenheit werden ausgeblendet.</span></span></label>
+    <label class="check"><input type="checkbox" name="track_balance" value="1" {% if profile.track_balance %}checked{% endif %}> <span><strong>Soll & Überstundensaldo erfassen</strong><br><span class="hint">Für Angestellte. Ausgeschaltet (z. B. freiberuflich) zählt Stempeln nur Stunden je Projekt; Saldo, Soll, Resturlaub und Abwesenheit werden ausgeblendet.</span></span></label>
     <div class="field-row three">
       <label>Wochenstunden <span class="hint">z. B. 40, 38,5 oder 38:30</span><input name="weekly_hours" value="{{ weekly }}" inputmode="decimal" required></label>
       <label>Urlaubstage pro Jahr<input name="vacation_days" value="{{ '%g' | format(profile.vacation_days) }}" inputmode="decimal" required></label>

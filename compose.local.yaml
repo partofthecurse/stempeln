@@ -1,4 +1,4 @@
 services:
-  stempel:
+  stempeln:
     build: .
-    image: stempel:local
+    image: stempeln:local

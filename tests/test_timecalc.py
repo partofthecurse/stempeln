@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from datetime import date
 
-from stempel.store import Store
-from stempel.timecalc import day_bounds, day_report, parse_local, required_break_net, target_seconds
+from stempeln.store import Store
+from stempeln.timecalc import day_bounds, day_report, parse_local, required_break_net, target_seconds
 
 H, M = 3600, 60
 PROFILE = {"weekly_minutes": 2400, "workdays": "01234", "break_rule": 1, "region": "BY"}

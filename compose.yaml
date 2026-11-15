@@ -1,18 +1,18 @@
 services:
-  stempel:
-    container_name: stempel
-    image: ${STEMPEL_IMAGE:-ghcr.io/partofthecurse/stempel:latest}
+  stempeln:
+    container_name: stempeln
+    image: ${STEMPELN_IMAGE:-ghcr.io/partofthecurse/stempeln:latest}
     restart: unless-stopped
     environment:
-      STEMPEL_DATA_DIR: /data
+      STEMPELN_DATA_DIR: /data
       TZ: ${TZ:-Europe/Berlin}
       MONITOR_INTERVAL_SECONDS: ${MONITOR_INTERVAL_SECONDS:-60}
       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
       TRUST_PROXY: "${TRUST_PROXY:-false}"
     volumes:
-      - stempel-data:/data
+      - stempeln-data:/data
     ports:
-      - "${STEMPEL_BIND_ADDRESS:-127.0.0.1}:${STEMPEL_PORT:-32769}:8000"
+      - "${STEMPELN_BIND_ADDRESS:-127.0.0.1}:${STEMPELN_PORT:-32769}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 30s
@@ -20,5 +20,5 @@ services:
       retries: 3
 
 volumes:
-  stempel-data:
-    name: ${STEMPEL_DATA_VOLUME:-stempel-data}
+  stempeln-data:
+    name: ${STEMPELN_DATA_VOLUME:-stempeln-data}

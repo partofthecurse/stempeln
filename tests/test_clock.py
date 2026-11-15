@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from stempel import clock
-from stempel.store import Store
+from stempeln import clock
+from stempeln.store import Store
 
 
 class ClockTests(unittest.TestCase):
@@ -74,7 +74,7 @@ class ClockTests(unittest.TestCase):
     def test_monitor_turns_online_device_into_signal(self):
         self.store.update_profile(self.user, device_host="10.0.0.9")
         monitor = clock.Monitor(self.store)
-        with patch("stempel.clock.probe", return_value=True):
+        with patch("stempeln.clock.probe", return_value=True):
             monitor.tick(now=1_800_000_000)
         self.assertEqual(self.store.open_entry(self.user)["source"], "device")
         self.assertTrue(monitor.snapshot(self.user)["online"])

@@ -5,8 +5,8 @@ import unittest
 
 import pyotp
 
-from stempel.security import hasher
-from stempel.web import create_app, parse_hours
+from stempeln.security import hasher
+from stempeln.web import create_app, parse_hours
 
 
 class WebTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class WebTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.app = create_app({"TESTING": True, "DATA_DIR": self.temp.name, "ENABLE_MONITOR": False,
                                "SESSION_COOKIE_SECURE": False, "WTF_CSRF_ENABLED": False})
-        self.store = self.app.extensions["stempel_store"]
+        self.store = self.app.extensions["stempeln_store"]
         with self.store.connect() as connection:
             connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('admin', ?, 'admin')", (hasher.hash("admin-password-123"),))
             connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('user', ?, 'user')", (hasher.hash("user-password-123"),))
@@ -121,7 +121,7 @@ class ProjectTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.app = create_app({"TESTING": True, "DATA_DIR": self.temp.name, "ENABLE_MONITOR": False,
                                "SESSION_COOKIE_SECURE": False, "WTF_CSRF_ENABLED": False})
-        self.store = self.app.extensions["stempel_store"]
+        self.store = self.app.extensions["stempeln_store"]
         with self.store.connect() as connection:
             connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('frei', ?, 'admin')", (hasher.hash("frei-password-123"),))
             connection.execute("INSERT INTO users (username, password_hash, role) VALUES ('other', ?, 'user')", (hasher.hash("other-password-123"),))

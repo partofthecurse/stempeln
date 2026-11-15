@@ -4,7 +4,7 @@ const themeLabels = { system: 'System', light: 'Hell', dark: 'Dunkel' };
 
 function applyTheme(theme) {
   if (theme === 'system') delete root.dataset.theme; else root.dataset.theme = theme;
-  try { if (theme === 'system') localStorage.removeItem('stempel-theme'); else localStorage.setItem('stempel-theme', theme); } catch (error) { /* ignorieren */ }
+  try { if (theme === 'system') localStorage.removeItem('stempeln-theme'); else localStorage.setItem('stempeln-theme', theme); } catch (error) { /* ignorieren */ }
   if (themeButton) {
     themeButton.title = `Darstellung: ${themeLabels[theme]}`;
     themeButton.textContent = theme === 'dark' ? '☾' : theme === 'light' ? '☀' : '◐';

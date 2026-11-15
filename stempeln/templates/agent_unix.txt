@@ -1,6 +1,6 @@
 #!/bin/sh
-# Stempel-Agent für Linux/macOS: sendet ein Lebenszeichen, wenn der Rechner gerade benutzt wird.
-# Einrichtung (crontab -e):  * * * * * /usr/local/bin/stempel-agent.sh
+# Stempeln-Agent für Linux/macOS: sendet ein Lebenszeichen, wenn der Rechner gerade benutzt wird.
+# Einrichtung (crontab -e):  * * * * * /usr/local/bin/stempeln-agent.sh
 URL="{{ base_url }}/api/v1/clock"
 TOKEN="stp_HIER_TOKEN_EINTRAGEN"
 IDLE_LIMIT=300

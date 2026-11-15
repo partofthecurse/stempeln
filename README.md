@@ -1,8 +1,8 @@
 <p align="center">
-   <img src="stempel/static/icons/app-icon.svg" alt="Stempel logo" width="120">
+   <img src="stempeln/static/icons/app-icon.svg" alt="Stempeln logo" width="120">
 </p>
 
-# Stempel
+# Stempeln
 
 Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, eine SQLite-Datei, keine Cloud. Benutzerkonten mit optionaler Zwei-Faktor-Authentifizierung, Hell-/Dunkelmodus und mehrere Wege, die Arbeitszeit **automatisch** zu erfassen.
 
@@ -10,9 +10,9 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
 
 - **Stempeluhr** mit Live-Timer, Tagessoll und voraussichtlichem Feierabend
 - **Projekte & Kunden** mit Farbe und optionalem Stundensatz: beim Einstempeln wählen, mit einem Klick wechseln, nachträglich zuordnen. Monatsauswertung mit Stunden und abrechenbarem Betrag, CSV pro Eintrag für die Rechnung.
-- **Für Angestellte oder freiberuflich**: Soll, Überstundensaldo, Resturlaub und Abwesenheiten lassen sich pro Konto abschalten. Dann zählt Stempel nur Stunden je Projekt.
+- **Für Angestellte oder freiberuflich**: Soll, Überstundensaldo, Resturlaub und Abwesenheiten lassen sich pro Konto abschalten. Dann zählt Stempeln nur Stunden je Projekt.
 - **Automatische Erfassung**
-  - *Gerät im Heimnetz*: Stempel pingt jede Minute deinen Arbeitslaptop (oder prüft einen TCP-Port). Ist er online, läuft die Zeit. Ist er länger als die Leerlaufzeit weg, endet der Eintrag zum letzten Kontakt.
+  - *Gerät im Heimnetz*: Stempeln pingt jede Minute deinen Arbeitslaptop (oder prüft einen TCP-Port). Ist er online, läuft die Zeit. Ist er länger als die Leerlaufzeit weg, endet der Eintrag zum letzten Kontakt.
   - *Lebenszeichen-API*: Ein kleiner Agent auf dem Arbeits-PC meldet sich nur, solange du Maus oder Tastatur benutzt. Damit zählen Mittagspausen nicht als Arbeitszeit. Skripte für Windows (PowerShell) und Linux/macOS liegen in der App unter **Automatik**.
   - *Ein/Aus/Toggle-API* für Home Assistant, NFC-Tags und iOS-/Android-Kurzbefehle
 - **Gesetzliche Pausen** (§4 ArbZG): 30 Min. ab 6 h, 45 Min. ab 9 h, automatisch abgezogen. Tatsächliche Pausen ab 15 Min. werden angerechnet.
@@ -24,11 +24,11 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
 
 ## Installation
 
-1. `compose.yaml` und `.env.example` auf den Docker-Host kopieren, `.env.example` als `.env` speichern und `STEMPEL_BIND_ADDRESS` setzen. Der Standard `127.0.0.1` ist nur auf dem Host erreichbar. Für das Heimnetz die LAN-IP des Hosts eintragen.
+1. `compose.yaml` und `.env.example` auf den Docker-Host kopieren, `.env.example` als `.env` speichern und `STEMPELN_BIND_ADDRESS` setzen. Der Standard `127.0.0.1` ist nur auf dem Host erreichbar. Für das Heimnetz die LAN-IP des Hosts eintragen.
 2. Ersten Admin anlegen:
 
    ```sh
-   docker compose run --rm --no-deps --entrypoint python stempel -m stempel.manage create-admin
+   docker compose run --rm --no-deps --entrypoint python stempeln -m stempeln.manage create-admin
    ```
 
 3. Starten:
@@ -37,13 +37,13 @@ Schlanke, selbst gehostete Zeiterfassung für den Homeserver. Ein Container, ein
    docker compose up -d
    ```
 
-4. `http://<STEMPEL_BIND_ADDRESS>:32769` öffnen, anmelden und unter **Konto** das Arbeitszeitmodell einstellen (Wochenstunden, Arbeitstage, Bundesland, Urlaubstage).
+4. `http://<STEMPELN_BIND_ADDRESS>:32769` öffnen, anmelden und unter **Konto** das Arbeitszeitmodell einstellen (Wochenstunden, Arbeitstage, Bundesland, Urlaubstage).
 
 Lokal bauen statt das veröffentlichte Image zu nutzen: `docker compose -f compose.yaml -f compose.local.yaml up -d --build`.
 
 Update: `docker compose pull && docker compose up -d`.
 
-Notfallzugang für Admins: `python -m stempel.manage reset-password USER` bzw. `reset-2fa USER` (Aufruf wie in Schritt 2).
+Notfallzugang für Admins: `python -m stempeln.manage reset-password USER` bzw. `reset-2fa USER` (Aufruf wie in Schritt 2).
 
 ## Automatik einrichten
 
@@ -51,14 +51,14 @@ Notfallzugang für Admins: `python -m stempel.manage reset-password USER` bzw. `
 
 Unter **Automatik** die IP oder den Hostnamen des Arbeitsgeräts eintragen. Am besten vergibst du im Router eine feste IP. Windows beantwortet Ping standardmäßig nicht. Dann entweder die Firewallregel „Datei- und Druckerfreigabe (Echoanforderung – ICMPv4 eingehend)“ aktivieren oder einen offenen Port angeben, z. B. `192.168.1.42:445`.
 
-Stempelst du manuell aus, während das Gerät noch online ist, startet Stempel erst nach der nächsten Leerlaufpause automatisch neu.
+Stempelst du manuell aus, während das Gerät noch online ist, startet Stempeln erst nach der nächsten Leerlaufpause automatisch neu.
 
 ### API
 
 Unter **Automatik** ein Token erzeugen. Danach:
 
 ```sh
-curl -X POST http://stempel.lan:32769/api/v1/clock \
+curl -X POST http://stempeln.lan:32769/api/v1/clock \
   -H "Authorization: Bearer stp_…" -H "Content-Type: application/json" \
   -d '{"action": "toggle"}'      # in | out | toggle | heartbeat
 ```
@@ -78,8 +78,8 @@ Optional `"project": "Name"` oder die Projekt-ID: `in` bzw. `toggle` mit Projekt
 
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
-| `STEMPEL_BIND_ADDRESS` | `127.0.0.1` | Host-Adresse für den Port |
-| `STEMPEL_PORT` | `32769` | Host-Port |
+| `STEMPELN_BIND_ADDRESS` | `127.0.0.1` | Host-Adresse für den Port |
+| `STEMPELN_PORT` | `32769` | Host-Port |
 | `TZ` | `Europe/Berlin` | Zeitzone für Tagesgrenzen |
 | `MONITOR_INTERVAL_SECONDS` | `60` | Prüfintervall für Geräte und Leerlauf |
 | `COOKIE_SECURE` / `TRUST_PROXY` | `false` | nur hinter einem HTTPS-Reverse-Proxy auf `true` setzen |
@@ -87,12 +87,12 @@ Optional `"project": "Name"` oder die Projekt-ID: `in` bzw. `toggle` mit Projekt
 ## Entwicklung
 
 ```sh
-docker build -t stempel:test .
-docker run --rm --network none -v "$PWD/tests:/app/tests:ro" --tmpfs /tmp -e STEMPEL_DATA_DIR=/tmp/data \
-  --entrypoint python stempel:test -m unittest discover -s /app/tests -v
+docker build -t stempeln:test .
+docker run --rm --network none -v "$PWD/tests:/app/tests:ro" --tmpfs /tmp -e STEMPELN_DATA_DIR=/tmp/data \
+  --entrypoint python stempeln:test -m unittest discover -s /app/tests -v
 ```
 
-Ein Tag `v*` baut das Multi-Arch-Image, veröffentlicht es auf `ghcr.io/partofthecurse/stempel` und legt ein Release an.
+Ein Tag `v*` baut das Multi-Arch-Image, veröffentlicht es auf `ghcr.io/partofthecurse/stempeln` und legt ein Release an.
 
 ## Hinweise
 

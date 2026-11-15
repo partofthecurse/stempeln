@@ -5,11 +5,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends iputils-ping && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt && \
-    useradd --system --uid 10001 --create-home stempel && \
-    mkdir -p /data && chown stempel:stempel /data && chmod 700 /data
-COPY stempel ./stempel
-USER stempel
-ENV STEMPEL_DATA_DIR=/data TZ=Europe/Berlin
+    useradd --system --uid 10001 --create-home stempeln && \
+    mkdir -p /data && chown stempeln:stempeln /data && chmod 700 /data
+COPY stempeln ./stempeln
+USER stempeln
+ENV STEMPELN_DATA_DIR=/data TZ=Europe/Berlin
 EXPOSE 8000
 # Ein Worker, damit genau ein Hintergrund-Monitor läuft
-CMD ["gunicorn", "--workers", "1", "--threads", "4", "--bind", "0.0.0.0:8000", "stempel.web:create_app()"]
+CMD ["gunicorn", "--workers", "1", "--threads", "4", "--bind", "0.0.0.0:8000", "stempeln.web:create_app()"]

@@ -1,13 +1,13 @@
-# Stempel-Agent für Windows: sendet jede Minute ein Lebenszeichen, solange der PC benutzt wird.
+# Stempeln-Agent für Windows: sendet jede Minute ein Lebenszeichen, solange der PC benutzt wird.
 # Einrichtung: Aufgabenplanung → Neue Aufgabe → Trigger „Bei Anmeldung“ → Aktion:
-#   powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Tools\stempel-agent.ps1
+#   powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File C:\Tools\stempeln-agent.ps1
 $Url = "{{ base_url }}/api/v1/clock"
 $Token = "stp_HIER_TOKEN_EINTRAGEN"
 $IdleLimitMinutes = 5
 
 Add-Type @'
 using System; using System.Runtime.InteropServices;
-public static class StempelIdle {
+public static class StempelnIdle {
   [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
   [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
   public static uint Seconds() {
@@ -19,7 +19,7 @@ public static class StempelIdle {
 '@
 
 while ($true) {
-  if ([StempelIdle]::Seconds() -lt $IdleLimitMinutes * 60) {
+  if ([StempelnIdle]::Seconds() -lt $IdleLimitMinutes * 60) {
     try {
       Invoke-RestMethod -Method Post -Uri $Url -Headers @{ Authorization = "Bearer $Token" } `
         -ContentType "application/json" -Body '{"action":"heartbeat"}' -TimeoutSec 10 | Out-Null

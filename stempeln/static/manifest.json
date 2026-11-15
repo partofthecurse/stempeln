@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Stempel Zeiterfassung",
-  "short_name": "Stempel",
+  "name": "Stempeln Zeiterfassung",
+  "short_name": "Stempeln",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

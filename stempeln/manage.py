@@ -11,9 +11,9 @@ def main():
     os.umask(0o077)
     arguments = sys.argv[1:]
     if arguments != ["create-admin"] and not (len(arguments) == 2 and arguments[0] in ("reset-2fa", "reset-password")):
-        print("Usage: python -m stempel.manage create-admin | reset-2fa USER | reset-password USER")
+        print("Usage: python -m stempeln.manage create-admin | reset-2fa USER | reset-password USER")
         return 2
-    store = Store(Path(os.getenv("STEMPEL_DATA_DIR", "/data")) / "stempel.db")
+    store = Store(Path(os.getenv("STEMPELN_DATA_DIR", "/data")) / "stempel.db")
     if arguments[0] != "create-admin":
         username = arguments[1]
         with store.connect() as connection:

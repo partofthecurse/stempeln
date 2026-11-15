@@ -17,9 +17,9 @@ jobs:
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Build test image
-        run: docker build -t stempel:test .
+        run: docker build -t stempeln:test .
       - name: Run tests
-        run: docker run --rm --network none -v "$PWD/tests:/app/tests:ro" --tmpfs /tmp -e STEMPEL_DATA_DIR=/tmp/data --entrypoint python stempel:test -m unittest discover -s /app/tests -v
+        run: docker run --rm --network none -v "$PWD/tests:/app/tests:ro" --tmpfs /tmp -e STEMPELN_DATA_DIR=/tmp/data --entrypoint python stempeln:test -m unittest discover -s /app/tests -v
       - name: Set image name
         id: image
         shell: bash
