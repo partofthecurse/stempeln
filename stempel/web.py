@@ -519,13 +519,16 @@ def create_app(test_config=None):
             return None
         return row["id"]
 
-    def api_state(user_id):
+    def api_state(user_id, result=None):
         now = int(time.time())
         with store.connect() as connection:
             created = connection.execute("SELECT created_at FROM users WHERE id = ?", (user_id,)).fetchone()["created_at"]
         profile = store.profile(user_id)
-        start, end = day_bounds(today())
-        report = day_report(profile, today(), store.entries_between(user_id, start, end), None, now)
+        current_day = today()
+        start, end = day_bounds(current_day)
+        absence = store.absences_between(user_id, current_day.isoformat(), current_day.isoformat()).get(current_day.isoformat())
+        report = day_report(profile, current_day, store.entries_between(user_id, start, end), absence, now)
+        saldo = balance(store, user_id, profile, created, current_day, now)
         entry = store.open_entry(user_id)
         return {
             "state": "in" if entry else "out",
@@ -533,17 +536,45 @@ def create_app(test_config=None):
             "source": entry["source"] if entry else None,
             "today_net_minutes": report["net"] // 60,
             "today_target_minutes": report["target"] // 60,
-            "balance_minutes": balance(store, user_id, profile, created, today(), now) // 60,
+            "balance_minutes": saldo // 60,
+            "message": api_message(result, entry, report, saldo, now),
         }
+
+    def api_message(result, entry, report, saldo, now):
+        today_text = f"heute {fmt_duration(report['net'])} h"
+        if report["target"]:
+            today_text += f" von {fmt_duration(report['target'])} h"
+        summary = f"{today_text} · Saldo {fmt_duration(saldo, signed=True)}"
+        if entry:
+            since = fmt_time(entry["start_at"])
+            if result == "started":
+                lead = f"✅ Eingestempelt um {since}"
+            elif result == "unchanged":
+                lead = f"Schon eingestempelt seit {since}"
+            else:
+                lead = f"⏱ Läuft seit {since}"
+            finish = finish_estimate(report, now)
+            return f"{lead} · {today_text}" + (f" · Soll erreicht ca. {fmt_time(finish)}" if finish else "")
+        if result == "stopped":
+            return f"👋 Ausgestempelt um {fmt_time(now)} · {summary}"
+        if result == "suppressed":
+            return f"Automatik pausiert (manuell ausgestempelt) · {summary}"
+        return f"Nicht eingestempelt · {summary}"
+
+    def api_response(payload, status=200):
+        wants_text = request.args.get("format") == "text" or "text/plain" in request.headers.get("Accept", "").split(",")[0]
+        if wants_text:
+            return Response(payload.get("message") or payload.get("error", ""), status=status, mimetype="text/plain")
+        return jsonify(payload), status
 
     @app.post("/api/v1/clock")
     @csrf.exempt
     def api_clock():
         user_id = api_user()
         if user_id is None:
-            return jsonify(error="Ungültiges oder fehlendes Token"), 401
+            return api_response({"error": "Ungültiges oder fehlendes Token"}, 401)
         data = request.get_json(silent=True) or request.form
-        action = (data.get("action") or "toggle").strip().lower()
+        action = (data.get("action") or request.args.get("action") or "toggle").strip().lower()
         if action == "in":
             result = "started" if clock.clock_in(store, user_id, "api") else "unchanged"
         elif action == "out":
@@ -553,15 +584,15 @@ def create_app(test_config=None):
         elif action == "heartbeat":
             result = clock.signal(store, user_id, "heartbeat")
         else:
-            return jsonify(error="action muss in, out, toggle oder heartbeat sein"), 400
-        return jsonify(result=result, **api_state(user_id))
+            return api_response({"error": "action muss in, out, toggle oder heartbeat sein"}, 400)
+        return api_response({"result": result, **api_state(user_id, result)})
 
     @app.get("/api/v1/status")
     def api_status():
         user_id = api_user()
         if user_id is None:
-            return jsonify(error="Ungültiges oder fehlendes Token"), 401
-        return jsonify(api_state(user_id))
+            return api_response({"error": "Ungültiges oder fehlendes Token"}, 401)
+        return api_response(api_state(user_id))
 
     # ---------------------------------------------------------------- Konto
 

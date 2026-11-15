@@ -77,6 +77,14 @@ class WebTests(unittest.TestCase):
         self.assertEqual((response.json["result"], response.json["state"], response.json["source"]), ("started", "in", "heartbeat"))
         self.assertEqual(self.client.post("/api/v1/clock", json={"action": "out"}, headers=headers).json["state"], "out")
         self.assertEqual(self.client.get("/api/v1/status", headers=headers).json["state"], "out")
+        text = self.client.post("/api/v1/clock?format=text", json={"action": "toggle"}, headers=headers)
+        self.assertEqual(text.mimetype, "text/plain")
+        self.assertTrue(text.get_data(as_text=True).startswith("✅ Eingestempelt um "))
+        with self.store.connect() as connection:
+            connection.execute("UPDATE entries SET start_at = start_at - 7200 WHERE end_at IS NULL")
+        text = self.client.post("/api/v1/clock?format=text&action=toggle", headers=headers).get_data(as_text=True)
+        self.assertRegex(text, r"^👋 Ausgestempelt um \d\d:\d\d · heute 2:0\d h")
+        self.assertEqual(self.client.get("/api/v1/status?format=text").get_data(as_text=True), "Ungültiges oder fehlendes Token")
 
     def test_work_model_and_balance(self):
         self.login()

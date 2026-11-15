@@ -34,6 +34,16 @@
     <li><code>heartbeat</code> – „ich arbeite gerade“. Startet bei Bedarf eine Sitzung; bleiben die Signale länger als die Leerlaufzeit aus, wird automatisch ausgestempelt.</li>
   </ul>
   <p><code>GET {{ base_url }}/api/v1/status</code> liefert Status, heutige Nettozeit und Saldo (z. B. für ein Home-Assistant-Dashboard).</p>
+  <p>Mit <code>?format=text</code> antwortet Stempel nur mit einem lesbaren Satz, z. B. „✅ Eingestempelt um 08:12 · heute 0:00 h von 8:00 h“. Ideal für Handy-Mitteilungen. Im JSON steht derselbe Text im Feld <code>message</code>.</p>
+  <details><summary>NFC-Tag mit dem iPhone (Kurzbefehle)</summary><ol class="plain-list">
+    <li>Kurzbefehle → <strong>Automation</strong> → <strong>+</strong> → <strong>NFC</strong> → Tag scannen, „Sofort ausführen“ wählen.</li>
+    <li>Aktion <strong>„Inhalte von URL abrufen“</strong>: URL <code>{{ base_url }}/api/v1/clock?format=text&amp;action=toggle</code>, Methode <strong>POST</strong>, Header <code>Authorization</code> = <code>Bearer stp_…</code>.</li>
+    <li>Aktion <strong>„Mitteilung anzeigen“</strong> mit dem Ergebnis „Inhalte der URL“.</li>
+  </ol></details>
+  <details><summary>NFC-Tag mit Android</summary><ol class="plain-list">
+    <li><strong>Mit Home Assistant:</strong> In der Companion-App unter Einstellungen → Tags einen Tag beschreiben, dann eine Automation mit Auslöser „Tag gescannt“ und Aktion <code>rest_command.stempel</code> mit <code>action: toggle</code> anlegen (siehe unten).</li>
+    <li><strong>Ohne Home Assistant:</strong> In der App „HTTP Shortcuts“ einen POST auf <code>{{ base_url }}/api/v1/clock?format=text&amp;action=toggle</code> mit dem Authorization-Header anlegen, „Antwort als Toast anzeigen“ wählen und den Shortcut mit „NFC Tools“ auf den Tag schreiben.</li>
+  </ol></details>
   <details><summary>curl</summary><pre>curl -X POST {{ base_url }}/api/v1/clock \
   -H "Authorization: Bearer stp_…" -H "Content-Type: application/json" \
   -d '{"action": "toggle"}'</pre></details>

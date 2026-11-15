@@ -61,6 +61,13 @@ curl -X POST http://stempel.lan:32769/api/v1/clock \
   -d '{"action": "toggle"}'      # in | out | toggle | heartbeat
 ```
 
+Mit `?format=text` kommt statt JSON nur ein lesbarer Satz zurück, z. B. `👋 Ausgestempelt um 17:03 · heute 8:21 h von 8:00 h · Saldo +1:15`. Im JSON steht er im Feld `message`. `action` darf auch als Query-Parameter kommen.
+
+### NFC-Tag
+
+- **iPhone:** Kurzbefehle → Automation → NFC → Tag scannen → „Inhalte von URL abrufen“ (`POST …/api/v1/clock?format=text&action=toggle`, Header `Authorization: Bearer stp_…`) → „Mitteilung anzeigen“.
+- **Android:** über die Home-Assistant-App (Tag scannen → Automation → `rest_command`) oder mit „HTTP Shortcuts“ + „NFC Tools“.
+
 `GET /api/v1/status` liefert Status, heutige Nettozeit, Tagessoll und Saldo in Minuten, etwa für ein Home-Assistant-Dashboard. Fertige Beispiele für Home Assistant (`rest_command`) und die Agenten stehen in der App.
 
 ## Konfiguration
